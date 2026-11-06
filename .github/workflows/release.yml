@@ -1,0 +1,65 @@
+name: Release
+
+# Pushing a version tag builds Oatcake.app and attaches it to a GitHub release:
+#   npm version patch && git push --follow-tags
+# Running the workflow by hand (Actions › Release › Run workflow) only checks that it builds.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-26
+    permissions:
+      contents: write # to create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Check the tag matches package.json
+        if: github.ref_type == 'tag'
+        run: |
+          version="v$(node -p 'require("./package.json").version')"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json's version ($version). Use npm version to make the tag."
+            exit 1
+          fi
+
+      # No package install scripts run, apart from Electron's own download.
+      - name: Install
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/electron/install.js
+
+      - run: npm run typecheck
+
+      # Builds the Swift recorder, bundles the app and sets Electron's fuses (scripts/package.mjs).
+      - run: npm run package
+
+      # ditto keeps the symlinks inside Electron's frameworks, which zip would break.
+      - name: Zip
+        run: |
+          zip="Oatcake-${GITHUB_REF_NAME}-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent out/Oatcake-darwin-arm64/Oatcake.app "$zip"
+          echo "ZIP=$zip" >> "$GITHUB_ENV"
+          ls -lh "$zip"
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: |
+            For Apple Silicon Macs on macOS 14.2 or later. Unzip, then move Oatcake to Applications.
+
+            Oatcake isn't notarised, so macOS blocks the first open: allow it in System Settings › Privacy & Security › Open Anyway. If the recorder still doesn't start, run `xattr -dr com.apple.quarantine /Applications/Oatcake.app` in Terminal. The first recording asks for microphone and system-audio permission for "OatcakeRecorder".
+        # --notes goes above the generated list of changes.
+        run: gh release create "$GITHUB_REF_NAME" "$ZIP" --repo "$GITHUB_REPOSITORY" --title "Oatcake $GITHUB_REF_NAME" --generate-notes --notes "$NOTES"

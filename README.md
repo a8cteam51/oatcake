@@ -147,6 +147,20 @@ Privacy & Security › Open Anyway. The first processing run downloads ~700 MB o
 under Needs review. The icon is `assets/icon.svg`; `assets/Oatcake.icns` is built from
 `assets/icon.png` with `iconutil`.
 
+To release a build, bump the version and push its tag:
+
+```sh
+npm version patch            # or minor; commits package.json and tags v0.1.1
+git push --follow-tags
+```
+
+The Release workflow (`.github/workflows/release.yml`) builds and packages the app on a GitHub
+Mac runner and attaches `Oatcake-v0.1.1-arm64.zip` to a new GitHub release. It stops if the tag
+doesn't match `package.json`'s version. Running it by hand from the Actions tab only checks that
+it builds. The recorder is ad-hoc signed, and macOS ties its permissions to that exact build, so
+after an update (or switching to your own build) it may ask for microphone and system-audio
+permission again. A Developer ID signature would stop that.
+
 ## Settings
 
 Settings in the app (stored in `~/Library/Application Support/Oatcake/config.json`):
