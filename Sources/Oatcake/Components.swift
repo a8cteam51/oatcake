@@ -81,6 +81,24 @@ struct Notice<Content: View>: View {
     }
 }
 
+/// A model failure in plain words, with the raw message behind Details when that says more.
+struct ModelError: View {
+    let raw: String
+    var prefix = ""
+    @ViewState private var details = false
+
+    var body: some View {
+        let plain = explainModelError(raw)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(prefix + plain).fixedSize(horizontal: false, vertical: true)
+                if plain != raw { Button(details ? "Hide details" : "Details") { details.toggle() }.buttonStyle(.link) }
+            }
+            if details { Text(raw).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+        }
+    }
+}
+
 /// The pulsing red dot of a recording in progress.
 struct RecDot: View {
     @ViewState private var dim = false

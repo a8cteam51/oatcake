@@ -6,7 +6,7 @@ public struct AskAnswer: Sendable {
     public var sessionId: String
 }
 
-private func askSystemPrompt(_ myName: String) -> String {
+private func askSystemPrompt(_ myName: String, jargon: String) -> String {
     [
         "You answer \(myName)'s questions about their meetings. The current directory holds one folder per meeting",
         "(grouped into series folders), each with summary.md, transcript.md (lines like '**[mm:ss] Name:** text'),",
@@ -17,7 +17,8 @@ private func askSystemPrompt(_ myName: String) -> String {
         "folder's path relative to the current directory, URL-encoded (spaces as %20, & as %26), with the meeting's title",
         "and short date as the link text, e.g. [Leads sync · Oct 29](...). Add transcript timestamps like [12:34] where",
         "they help. If the meetings don't answer the question, say so.",
-    ].joined(separator: " ")
+        jargon,
+    ].filter { !$0.isEmpty }.joined(separator: " ")
 }
 
 /// Describes a tool call in a few words, for the progress line.
@@ -62,13 +63,13 @@ public final class AskRequest: @unchecked Sendable {
      * settings or CLAUDE.md. A transcript that tries to steer it (anything said on a call ends up in one)
      * can't reach files elsewhere on the Mac.
      */
-    public func run(root: URL, meeting: String, question: String, sessionId: String?, myName: String, model: String?,
+    public func run(root: URL, meeting: String, question: String, sessionId: String?, myName: String, jargon: String = "", model: String?,
                     onStep: @escaping @Sendable (String) -> Void) async throws -> AskAnswer {
         if let sessionId, sessionId.range(of: #"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"#, options: [.regularExpression, .caseInsensitive]) == nil {
             throw OatcakeError("That conversation can't be continued. Start a new chat.")
         }
         var args = ["-p", "--output-format", "stream-json", "--verbose",
-                    "--system-prompt", askSystemPrompt(myName),
+                    "--system-prompt", askSystemPrompt(myName, jargon: jargon),
                     "--tools", "Read,Grep,Glob", "--allowedTools", "Read(./**),Grep(./**),Glob(./**)",
                     "--strict-mcp-config", "--setting-sources", ""]
         if let model, !model.isEmpty { args += ["--model", model] }

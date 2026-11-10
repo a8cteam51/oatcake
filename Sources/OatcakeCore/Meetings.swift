@@ -40,7 +40,7 @@ public struct TreeNode: Identifiable, Equatable, Hashable, Sendable {
     public var allFolders: [TreeNode] { subfolders.flatMap { [$0] + $0.allFolders } }
 }
 
-/// What meeting.json holds. Unknown keys (granolaNote, recording) are kept when it's rewritten.
+/// What meeting.json holds. Its other keys (granolaNote, recording) are kept when a meeting is retitled.
 public struct MeetingMeta: Codable, Equatable, Sendable {
     public var title: String?
     public var startedAt: String?
@@ -166,6 +166,28 @@ public final class Meetings: @unchecked Sendable {
         return relativePath(to, to: root)
     }
 
+    /**
+     * Gives a meeting a new title: in meeting.json (its other keys are kept) and in its folder's name,
+     * which keeps its date. Returns the meeting's path afterwards. When a folder with the new name is
+     * already there, only the title changes.
+     */
+    @discardableResult
+    public func retitle(_ rel: String, to title: String) throws -> String {
+        let clean = title.trimmed
+        guard !clean.isEmpty else { throw OatcakeError("Give the meeting a title") }
+        guard !rel.isEmpty else { throw OatcakeError("That isn't a meeting") }
+        let file = try resolveInside(root, rel).appendingPathComponent("meeting.json")
+        guard let data = try? Data(contentsOf: file), var meta = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw OatcakeError("This meeting's details (meeting.json) can't be read")
+        }
+        meta["title"] = clean
+        let written = try JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try writeAtomic(file, written + Data("\n".utf8))
+        let name = (rel as NSString).lastPathComponent
+        guard let date = name.range(of: #"^\d{4}-\d{2}-\d{2} \d{4} "#, options: .regularExpression) else { return rel }
+        return (try? rename(rel, to: String(name[date]) + folderSafe(clean))) ?? rel
+    }
+
     @discardableResult
     public func createFolder(in parent: String, named name: String) throws -> String {
         let clean = try checkName(name)
@@ -231,8 +253,13 @@ public func matchingFolder(_ title: String, in tree: TreeNode) -> String? {
 public func meetingFolderName(title: String, startedAt: Date) -> String {
     let c = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: startedAt)
     let stamp = String(format: "%04d-%02d-%02d %02d%02d", c.year!, c.month!, c.day!, c.hour!, c.minute!)
-    let clean = title.replacingOccurrences(of: #"[/:\\]"#, with: "-", options: .regularExpression).trimmed
+    let clean = folderSafe(title)
     return "\(stamp) \(clean.isEmpty ? "Call" : clean)"
+}
+
+/// A title as it can appear in a folder name: no "/", ":" or "\".
+func folderSafe(_ title: String) -> String {
+    title.replacingOccurrences(of: #"[/:\\]"#, with: "-", options: .regularExpression).trimmed
 }
 
 /// A folder name made from free text such as an event title: no "/" or ":".

@@ -169,7 +169,8 @@ struct TodosView: View {
                         } label: {
                             HStack(spacing: 5) {
                                 Circle().fill(folder.isEmpty ? Color.secondary : Color.accentColor).frame(width: 6, height: 6)
-                                Text(grouping == .folder ? (date.isEmpty ? "Open meeting" : date) : "\(folder.isEmpty ? "Meetings" : baseName(folder))\(date.isEmpty ? "" : " · \(date)")")
+                                // The meeting itself, so two to-dos with the same words from different meetings can be told apart.
+                                Text("\(item.meeting.title)\(date.isEmpty ? "" : " · \(date)")")
                             }
                         }
                         .buttonStyle(.link)

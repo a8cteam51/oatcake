@@ -109,7 +109,7 @@ struct AskBar: View {
             if let answer = turn.answer {
                 MarkdownView(markdown: answerMarkdown(answer), fontSize: 13)
             } else if let error = turn.error {
-                Text(error).foregroundStyle(.red).textSelection(.enabled)
+                ModelError(raw: error).foregroundStyle(.red).textSelection(.enabled)
             } else if turn.stopped {
                 Text("Stopped.").foregroundStyle(.secondary)
             } else {

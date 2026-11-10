@@ -35,8 +35,10 @@ struct MeetingView: View {
     @ViewState private var pending: [FileKey: String] = [:]
     @ViewState private var saveTask: Task<Void, Never>?
     @ViewState private var arrived = false
-    @ViewState private var summarising = false
-    @ViewState private var summaryError = ""
+    @ViewState private var finding = false
+    @ViewState private var query = ""
+    @ViewState private var match = 0
+    @FocusState private var findFocused: Bool
 
     private var path: String { node.path }
 
@@ -56,6 +58,15 @@ struct MeetingView: View {
             load()
         }
         .onChange(of: model.diskVersion) { load() }
+        // ⌘F: Find, on the transcript.
+        .onChange(of: model.findRequest) {
+            flush()
+            markdown = false
+            Remembered.markdown = false
+            switchTab(.transcript)
+            finding = true
+            findFocused = true
+        }
         .onDisappear { flush() }
         .background {
             // ⌘1–⌘3 switch tabs.
@@ -149,9 +160,9 @@ struct MeetingView: View {
             .labelsHidden()
         }
         ToolbarItemGroup(placement: .automatic) {
-            if !status.isEmpty && (markdown || status == "todo") {
+            if markdown || status == "todo" || status == "failed" {
                 HStack(spacing: 6) {
-                    Text(["saving": "Saving…", "saved": "Saved", "failed": "Couldn’t save", "todo": "Saved to todo.md"][status] ?? "")
+                    Text(["saving": "Saving…", "saved": "Saved", "failed": "Couldn’t save", "todo": "Saved to todo.md"][status] ?? "Saves as you type")
                         .foregroundStyle(status == "failed" ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                     if status == "failed" { Button("Try again") { flush() }.buttonStyle(.link) }
                 }
@@ -183,7 +194,20 @@ struct MeetingView: View {
     }
 
     private func content(_ files: [FileKey: String]) -> some View {
-        ScrollViewReader { proxy in
+        let rows = transcriptRows(files)
+        let found = finding && tab == .transcript && !markdown ? matches(in: rows) : []
+        return VStack(spacing: 0) {
+            if finding && tab == .transcript && !markdown {
+                findBar(found)
+                Divider()
+            }
+            scrolling(files, rows: rows, found: found)
+        }
+    }
+
+    private func scrolling(_ files: [FileKey: String], rows: [Row], found: [Int]) -> some View {
+        let current = found.indices.contains(match) ? found[match] : nil
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     PageTitle(text: meta.title ?? meetingTitle(node))
@@ -197,7 +221,7 @@ struct MeetingView: View {
                     } else {
                         switch tab {
                         case .summary: summary(files)
-                        case .transcript: transcript(files)
+                        case .transcript: transcript(rows, current: current)
                         case .notes: notes(files)
                         }
                     }
@@ -207,6 +231,9 @@ struct MeetingView: View {
                 .padding(.bottom, 120)
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
+            }
+            .onChange(of: current) {
+                if let current { withAnimation { proxy.scrollTo(current, anchor: UnitPoint(x: 0, y: 0.33)) } }
             }
             .onChange(of: flash) {
                 guard flash >= 0 else { return }
@@ -321,60 +348,129 @@ struct MeetingView: View {
         }
     }
 
-    /// A meeting saved while the summary model couldn't be reached: its summary can be written now.
-    private var summaryLater: some View {
-        Notice(tone: summaryError.isEmpty ? .grey : .red) {
-            Text("No summary yet").fontWeight(.semibold)
-            Text(summaryError.isEmpty
-                 ? "The transcript and your notes are saved. Oatcake can write the summary and to-dos from them now."
-                 : "Couldn’t write it: \(summaryError)")
-            HStack(spacing: 8) {
-                Button(summarising ? "Writing the summary…" : "Write summary") {
-                    summarising = true
-                    summaryError = ""
-                    Task {
-                        do {
-                            try await model.writeSummary(path)
-                            load()
-                        } catch {
-                            summaryError = error.localizedDescription
-                        }
-                        summarising = false
-                    }
-                }
-                .disabled(summarising)
-                if summarising { ProgressView().controlSize(.small) }
+    /// A meeting without its summary: it's being written now (after a save), or the model couldn't
+    /// be reached and it can be written when it can.
+    @ViewBuilder private var summaryLater: some View {
+        if model.summarising.contains(path) {
+            Notice(tone: .blue) {
+                Text("Writing the summary…").fontWeight(.semibold)
+                Text("The transcript and your notes are already saved.")
             }
-            .padding(.top, 6)
+        } else {
+            let error = model.summaryErrors[path]
+            Notice(tone: error == nil ? .grey : .red) {
+                Text("No summary yet").fontWeight(.semibold)
+                if let error {
+                    ModelError(raw: error, prefix: "Couldn’t write it. ")
+                } else {
+                    Text("The transcript and your notes are saved. Oatcake can write the summary and to-dos from them now.")
+                }
+                Button("Write summary") { model.writeSummary(path) }.padding(.top, 6)
+            }
         }
     }
 
-    private func transcript(_ files: [FileKey: String]) -> some View {
+    // MARK: Transcript
+
+    /// A line of the transcript as shown. Granola's CSV export has transcripts without times or
+    /// names: those are plain paragraphs, with no speaker.
+    private struct Row {
+        var speaker: String?
+        var stamp = ""
+        var text: String
+    }
+
+    private func transcriptRows(_ files: [FileKey: String]) -> [Row] {
         let lines = transcriptLines
-        let plain = lines.isEmpty ? (files[.transcript] ?? "").components(separatedBy: "\n").map(\.trimmed).filter { !$0.isEmpty } : []
-        return LazyVStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { i, l in
+        if !lines.isEmpty { return lines.map { Row(speaker: $0.speaker, stamp: $0.stamp, text: $0.text) } }
+        return (files[.transcript] ?? "").components(separatedBy: "\n").map(\.trimmed).filter { !$0.isEmpty }.map { Row(text: $0) }
+    }
+
+    /// The rows that have what's being looked for.
+    private func matches(in rows: [Row]) -> [Int] {
+        let wanted = query.trimmed
+        guard !wanted.isEmpty else { return [] }
+        return rows.indices.filter { rows[$0].text.range(of: wanted, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+    }
+
+    private func findBar(_ found: [Int]) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Find in transcript", text: $query)
+                .textFieldStyle(.plain)
+                .focused($findFocused)
+                .onSubmit { step(1, found) }
+                .onChange(of: query) { match = 0 }
+            Text(query.trimmed.isEmpty ? "" : found.isEmpty ? "Not found" : "\(min(match, found.count - 1) + 1) of \(found.count)")
+                .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+            Button { step(-1, found) } label: { Image(systemName: "chevron.up") }.disabled(found.isEmpty).help("Previous")
+            Button { step(1, found) } label: { Image(systemName: "chevron.down") }.disabled(found.isEmpty).help("Next (Return)")
+            Button("Done") { endFind() }.help("Close (Esc)")
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .onKeyPress(.escape) {
+            endFind()
+            return .handled
+        }
+    }
+
+    private func step(_ by: Int, _ found: [Int]) {
+        guard !found.isEmpty else { return }
+        match = (min(match, found.count - 1) + by + found.count) % found.count
+    }
+
+    private func endFind() {
+        finding = false
+        findFocused = false
+        query = ""
+        match = 0
+    }
+
+    /// The text with what's being looked for marked.
+    private func marked(_ text: String) -> AttributedString {
+        var out = AttributedString(text)
+        let wanted = query.trimmed
+        guard finding, !wanted.isEmpty else { return out }
+        var from = text.startIndex
+        while let range = text.range(of: wanted, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
+            if let lower = AttributedString.Index(range.lowerBound, within: out), let upper = AttributedString.Index(range.upperBound, within: out) {
+                out[lower..<upper].backgroundColor = Color.yellow.opacity(0.45)
+            }
+            from = range.upperBound
+        }
+        return out
+    }
+
+    private func transcript(_ rows: [Row], current: Int?) -> some View {
+        LazyVStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
+                // A long turn is several paragraphs: the ones after the first show only their time.
+                let continued = i > 0 && row.speaker != nil && rows[i - 1].speaker == row.speaker
                 HStack(alignment: .top, spacing: 10) {
-                    Avatar(name: l.speaker, size: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 8) {
-                            Text(l.speaker).fontWeight(.semibold)
-                            Text(l.stamp).foregroundStyle(.tertiary).monospacedDigit()
+                    if let speaker = row.speaker {
+                        Avatar(name: speaker, size: 24).opacity(continued ? 0 : 1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 8) {
+                                if !continued { Text(speaker).fontWeight(.semibold) }
+                                Text(row.stamp).foregroundStyle(.tertiary).monospacedDigit()
+                            }
+                            .font(.callout)
+                            Text(marked(row.text)).font(.system(size: 14)).lineSpacing(3).textSelection(.enabled)
                         }
-                        .font(.callout)
-                        Text(l.text).font(.system(size: 14)).lineSpacing(3).textSelection(.enabled)
+                    } else {
+                        Text(marked(row.text)).font(.system(size: 14)).lineSpacing(3).textSelection(.enabled)
                     }
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 8).fill(i == flash ? Color.orange.opacity(0.16) : .clear))
+                .padding(.vertical, continued ? 3 : 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(i == flash || i == current ? Color.orange.opacity(0.16) : .clear))
                 .id(i)
             }
-            // Granola's CSV export has transcripts without times or names: shown as plain paragraphs.
-            ForEach(Array(plain.enumerated()), id: \.offset) { _, p in
-                Text(p).font(.system(size: 14)).lineSpacing(3).textSelection(.enabled).padding(.bottom, 8)
-            }
-            if lines.isEmpty && plain.isEmpty { Text("transcript.md is empty.").foregroundStyle(.secondary) }
+            if rows.isEmpty { Text("transcript.md is empty.").foregroundStyle(.secondary) }
         }
     }
 

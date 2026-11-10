@@ -9,6 +9,7 @@ struct LiveView: View {
     @ViewState private var micQuietSince: Date?
     @ViewState private var callQuietSince: Date?
     @ViewState private var devices: [InputDevice] = []
+    @ViewState private var showTranscript = UserDefaults.standard.object(forKey: "liveTranscriptShown") as? Bool ?? true
 
     private var status: RecorderStatus { model.status }
     private var started: Bool { status.state == .recording }
@@ -17,6 +18,7 @@ struct LiveView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+          HStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(pathAbove(rec.folder ?? "", rec.title)).foregroundStyle(.secondary)
@@ -34,6 +36,11 @@ struct LiveView: View {
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
+            if showTranscript && model.config.liveTranscript {
+                Divider()
+                transcript.frame(width: 340)
+            }
+          }
             Divider()
             bar
         }
@@ -57,6 +64,15 @@ struct LiveView: View {
                     Circle().fill(.secondary).frame(width: 7, height: 7)
                     Text(status.state == .error ? "Recording stopped" : "Starting…").foregroundStyle(.secondary)
                 }
+            }
+        }
+        if model.config.liveTranscript {
+            ToolbarItem(placement: .automatic) {
+                Toggle(isOn: Binding(get: { showTranscript }, set: { showTranscript = $0; UserDefaults.standard.set($0, forKey: "liveTranscriptShown") })) {
+                    Text("Transcript")
+                }
+                .toggleStyle(.button)
+                .help("Show or hide the live transcript")
             }
         }
         ToolbarItem(placement: .automatic) {
@@ -108,6 +124,49 @@ struct LiveView: View {
         let callQuiet = (status.systemLevel ?? 0) < 0.001
         micQuietSince = micQuiet ? (micQuietSince ?? Date()) : nil
         callQuietSince = callQuiet ? (callQuietSince ?? Date()) : nil
+    }
+
+    // MARK: Live transcript
+
+    /// What's been said so far, a moment after each pause. Your microphone is you; everyone on the
+    /// call side shares one obviously made-up name until the call is over and the voices are told apart.
+    private var transcript: some View {
+        let lines = liveTranscript(model.liveLines)
+        let myName = model.config.myName.isEmpty ? "You" : model.config.myName
+        let other = callPlaceholder(for: rec.id)
+        let stopped = model.liveStatus.hasPrefix("The live transcript stopped")
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        SectionLabel(text: "Live transcript")
+                        Spacer()
+                        Text("Names come after the call").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if lines.isEmpty && !stopped {
+                        Text(["", "Listening"].contains(model.liveStatus) ? "Listening. What’s said appears here a moment after each pause." : "\(model.liveStatus)…")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(lines) { line in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(line.track == .mic ? myName : other).fontWeight(.semibold)
+                                    .foregroundStyle(line.track == .mic ? AnyShapeStyle(person(myName).color) : AnyShapeStyle(.secondary))
+                                Text(clock(line.start)).foregroundStyle(.tertiary).monospacedDigit()
+                            }
+                            .font(.caption)
+                            Text(line.text).font(.callout).textSelection(.enabled)
+                        }
+                    }
+                    if stopped { Text(model.liveStatus).font(.callout).foregroundStyle(.red) }
+                    Color.clear.frame(height: 1).id("end")
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: model.liveLines.count) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: Notes

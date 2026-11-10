@@ -71,6 +71,16 @@ public struct Config: Codable, Equatable, Sendable {
     public var callReminders: Bool
     /// Look for a new release 20 seconds after launch and once a day.
     public var updateCheck: Bool
+    /// A notification offering to record when a calling app starts using the microphone.
+    public var callNotice: Bool
+    /// Stop recording once the calling app has let go of the microphone and the call audio has gone quiet.
+    public var autoStop: Bool
+    /// Transcribe during the call, for the live transcript beside your notes.
+    public var liveTranscript: Bool
+    /// Names, products and acronyms the summary model should spell as written here.
+    public var jargon: [String]
+    /// With a calendar connected, show the time until the next call in the menu bar.
+    public var menuBarNextCall: Bool
 
     public var meetingsRoot: URL { URL(fileURLWithPath: outputDir, isDirectory: true) }
 
@@ -94,7 +104,8 @@ public struct Config: Codable, Equatable, Sendable {
         )
     }
 
-    init(myName: String, outputDir: String, asrModel: String, llm: LlmConfig, keepAudio: Bool, mic: MicChoice?, callReminders: Bool, updateCheck: Bool) {
+    init(myName: String, outputDir: String, asrModel: String, llm: LlmConfig, keepAudio: Bool, mic: MicChoice?, callReminders: Bool, updateCheck: Bool,
+         callNotice: Bool = true, autoStop: Bool = true, liveTranscript: Bool = true, jargon: [String] = [], menuBarNextCall: Bool = true) {
         self.myName = myName
         self.outputDir = outputDir
         self.asrModel = asrModel
@@ -103,6 +114,11 @@ public struct Config: Codable, Equatable, Sendable {
         self.mic = mic
         self.callReminders = callReminders
         self.updateCheck = updateCheck
+        self.callNotice = callNotice
+        self.autoStop = autoStop
+        self.liveTranscript = liveTranscript
+        self.jargon = jargon
+        self.menuBarNextCall = menuBarNextCall
     }
 
     /// Missing or unreadable settings fall back to the defaults one by one.
@@ -117,6 +133,11 @@ public struct Config: Codable, Equatable, Sendable {
         mic = try? c.decodeIfPresent(MicChoice.self, forKey: .mic)
         callReminders = (try? c.decodeIfPresent(Bool.self, forKey: .callReminders)) ?? base.callReminders
         updateCheck = (try? c.decodeIfPresent(Bool.self, forKey: .updateCheck)) ?? base.updateCheck
+        callNotice = (try? c.decodeIfPresent(Bool.self, forKey: .callNotice)) ?? base.callNotice
+        autoStop = (try? c.decodeIfPresent(Bool.self, forKey: .autoStop)) ?? base.autoStop
+        liveTranscript = (try? c.decodeIfPresent(Bool.self, forKey: .liveTranscript)) ?? base.liveTranscript
+        jargon = (try? c.decodeIfPresent([String].self, forKey: .jargon)) ?? base.jargon
+        menuBarNextCall = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarNextCall)) ?? base.menuBarNextCall
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -130,10 +151,21 @@ public struct Config: Codable, Equatable, Sendable {
         if let mic { try c.encode(mic, forKey: .mic) } else { try c.encodeNil(forKey: .mic) }
         try c.encode(callReminders, forKey: .callReminders)
         try c.encode(updateCheck, forKey: .updateCheck)
+        try c.encode(callNotice, forKey: .callNotice)
+        try c.encode(autoStop, forKey: .autoStop)
+        try c.encode(liveTranscript, forKey: .liveTranscript)
+        try c.encode(jargon, forKey: .jargon)
+        try c.encode(menuBarNextCall, forKey: .menuBarNextCall)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case myName, outputDir, asrModel, llm, keepAudio, mic, callReminders, updateCheck
+        case myName, outputDir, asrModel, llm, keepAudio, mic, callReminders, updateCheck, callNotice, autoStop, liveTranscript, jargon, menuBarNextCall
+    }
+
+    /// For the model: how to spell the names and terms you've listed, or "" when there are none.
+    public var jargonLine: String {
+        let terms = jargon.map(\.trimmed).filter { !$0.isEmpty }
+        return terms.isEmpty ? "" : "Spell these names and terms exactly as written here whenever they come up (the transcript may have misheard them): \(terms.joined(separator: ", "))."
     }
 
     public static func load() -> Config {
@@ -183,6 +215,8 @@ public enum ShellEnvironment {
             env.removeValue(forKey: "ANTHROPIC_API_KEY")
             env.removeValue(forKey: "OATCAKE_OPENAI_API_KEY")
         }
+        // The calendar's private address is nobody else's business either way.
+        env.removeValue(forKey: "OATCAKE_CALENDAR_URL")
         return env
     }
 }

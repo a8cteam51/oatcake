@@ -122,6 +122,18 @@ private func fixture(_ name: String) throws -> URL {
         #expect(try meetings.folderForEvent(title: "Leads sync", recurring: true) == "Leads sync")
         #expect(try meetings.folderForEvent(title: "Weekly: new", recurring: true) == "Weekly- new")
         #expect(try meetings.folderForEvent(title: "One-off", recurring: false) == "")
+
+        // Renaming a meeting changes its title and its folder's name, and keeps meeting.json's other keys.
+        let meeting = "Leads sync/2026-10-29 1630 Leads sync"
+        try #"{"title":"Leads sync","startedAt":"2026-10-29T16:30:00.000Z","recording":"r1","granolaNote":"https://notes.granola.ai/d/x"}"#
+            .write(to: root.appendingPathComponent(meeting + "/meeting.json"), atomically: true, encoding: .utf8)
+        let renamed = try meetings.retitle(meeting, to: "Leads: Q4 plan")
+        #expect(renamed == "Leads sync/2026-10-29 1630 Leads- Q4 plan")
+        let node = try #require(meetings.tree().find(renamed))
+        #expect(node.title == "Leads: Q4 plan" && node.startedAt != nil)
+        let kept = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent(renamed + "/meeting.json"))) as? [String: String]
+        #expect(kept?["recording"] == "r1" && kept?["granolaNote"] == "https://notes.granola.ai/d/x")
+        #expect(throws: OatcakeError.self) { try meetings.retitle(renamed, to: "  ") }
     }
 }
 
@@ -184,7 +196,7 @@ private func fixture(_ name: String) throws -> URL {
 }
 
 @Suite struct SaveTests {
-    /// The summary model can't be reached: the meeting is still saved, without summary.md.
+    /// Saving involves no model: the meeting is written, and its summary is a separate step that can fail and be tried again.
     @Test func savesWithoutTheModel() async throws {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-save-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -202,17 +214,16 @@ private func fixture(_ name: String) throws -> URL {
         config.llm = LlmConfig(provider: .openaiCompatible) // no endpoint: the model can't be reached
         let rec = Recording(id: "2026-11-10T14-00-00-000Z", dir: recDir, title: "Weekly sync", folder: "", startedAt: Date(), state: .processed)
 
-        let saved = try await saveMeeting(config, rec, decisions: ["A": .name("Alex Kim")], folder: "") { _ in }
-        #expect(saved.summaryError != nil)
-        let out = root.appendingPathComponent(saved.path)
+        let saved = try saveMeeting(config, rec, decisions: ["A": .name("Alex Kim")], folder: "")
+        let out = root.appendingPathComponent(saved)
         #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("transcript.md").path))
         #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("meeting.json").path))
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
         #expect(readText(out.appendingPathComponent("transcript.md")).contains("**[00:04] Alex Kim:** Hi Sam."))
         #expect(FileManager.default.fileExists(atPath: recDir.appendingPathComponent("saved.json").path))
-        // Writing it later fails the same way while the model is still unreachable, and leaves the meeting alone.
+        // Writing the summary fails while the model is unreachable, and leaves the meeting alone.
         var failed = false
-        do { try await writeSummary(config, meeting: saved.path) } catch { failed = true }
+        do { try await writeSummary(config, meeting: saved) } catch { failed = true }
         #expect(failed)
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
     }
@@ -235,17 +246,46 @@ private func fixture(_ name: String) throws -> URL {
         }
         let transcript = { (path: String) in readText(config.meetingsRoot.appendingPathComponent(path).appendingPathComponent("transcript.md")) }
 
-        let first = try await saveMeeting(config, try recording("2026-11-10T14-00-10-000Z", at: "2026-11-10T14:00:10.000Z", saying: "First call."),
-                                          decisions: [:], folder: "") { _ in }
+        let first = try saveMeeting(config, try recording("2026-11-10T14-00-10-000Z", at: "2026-11-10T14:00:10.000Z", saying: "First call."),
+                                    decisions: [:], folder: "")
         let later = try recording("2026-11-10T14-00-45-000Z", at: "2026-11-10T14:00:45.000Z", saying: "Second call.")
-        let second = try await saveMeeting(config, later, decisions: [:], folder: "") { _ in }
-        #expect(second.path == first.path + " (2)")
-        #expect(transcript(first.path).contains("First call."))
-        #expect(transcript(second.path).contains("Second call."))
+        let second = try saveMeeting(config, later, decisions: [:], folder: "")
+        #expect(second == first + " (2)")
+        #expect(transcript(first).contains("First call."))
+        #expect(transcript(second).contains("Second call."))
 
-        let again = try await saveMeeting(config, later, decisions: [:], folder: "") { _ in }
-        #expect(again.path == second.path)
+        let again = try saveMeeting(config, later, decisions: [:], folder: "")
+        #expect(again == second)
         #expect(try FileManager.default.contentsOfDirectory(atPath: config.outputDir).count == 2)
+    }
+
+    /// The title and folder chosen in review are the ones saved, and a long turn is split at pauses.
+    @Test func savesUnderTheReviewedTitleInShorterParagraphs() throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-save-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        var config = Config.defaults()
+        config.myName = "Sam Taylor"
+        config.outputDir = tmp.appendingPathComponent("Meetings").path
+        config.keepAudio = true
+        let dir = tmp.appendingPathComponent("rec")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // One person talking for 80 s in ten-second stretches with half-second pauses, then a reply.
+        let turn = (0..<8).map { Line(speaker: "A", start: Double($0) * 10, end: Double($0) * 10 + 9.5, text: "Part \($0 + 1).") }
+        let analysis = Analysis(title: "Call", startedAt: "2026-11-10T14:00:00.000Z", endedAt: "2026-11-10T14:02:00.000Z",
+                                lines: turn + [Line(speaker: me, start: 82, end: 84, text: "Thanks.")],
+                                speakers: [SpeakerInfo(id: "A", seconds: 76, embedding: nil, suggestion: nil, quotes: [])],
+                                echoLinesRemoved: 0, me: nil, warnings: [], embeddingModel: voiceprintModel)
+        try encodeJSON(analysis).write(to: dir.appendingPathComponent("analysis.json"), atomically: true, encoding: .utf8)
+        let rec = Recording(id: "2026-11-10T14-00-00-000Z", dir: dir, title: "Call", folder: "", startedAt: Date(), state: .processed)
+
+        let path = try saveMeeting(config, rec, decisions: ["A": .name("Alex Kim")], folder: "Clients/Acme", title: "  Acme kickoff ")
+        #expect(path.hasPrefix("Clients/Acme/") && path.hasSuffix(" Acme kickoff"))
+        let files = try Meetings(root: config.meetingsRoot).read(path)
+        #expect(files.meta.title == "Acme kickoff")
+        let paragraphs = parseTranscript(files.transcript)
+        #expect(paragraphs.map(\.speaker) == ["Alex Kim", "Alex Kim", "Alex Kim", "Sam Taylor"])
+        #expect(paragraphs.map(\.stamp) == ["00:00", "00:30", "01:00", "01:22"])
+        #expect(paragraphs[0].text == "Part 1. Part 2. Part 3.")
     }
 }
 
@@ -284,4 +324,63 @@ private func fixture(_ name: String) throws -> URL {
         try forgetVoice("Alex", file: file)
         #expect(knownVoices(file).map(\.name) == ["Nate Allen"])
     }
+}
+
+@Suite struct ModelErrorTests {
+    @Test func plainWords() {
+        let unknown = explainModelError(#"claude exited 1: [claude-code:unrecognized_model] {"model":"claude-fable-5-2","query_source":"sdk"}"#)
+        #expect(unknown.contains("“claude-fable-5-2”") && unknown.contains("Settings › Summaries"))
+        #expect(explainModelError("Could not connect to the server.").contains("couldn’t be reached"))
+        #expect(explainModelError("claude exited 1: Invalid API key · Please run /login").contains("/login"))
+        #expect(explainModelError("The Anthropic API returned 429: rate limit exceeded").contains("usage limit"))
+        // Already plain: unchanged.
+        #expect(explainModelError("Add an Anthropic API key in Settings first.") == "Add an Anthropic API key in Settings first.")
+    }
+
+    @Test func jargon() {
+        var config = Config.defaults()
+        #expect(config.jargonLine.isEmpty)
+        config.jargon = ["Automattic", " ", "WooCommerce"]
+        #expect(config.jargonLine.hasSuffix("Automattic, WooCommerce."))
+    }
+
+    /// A config written by an earlier version has none of the newer settings: they take their defaults.
+    @Test func olderConfig() throws {
+        let old = #"{"myName":"Sam","outputDir":"/tmp/m","asrModel":"parakeet-unified-en","keepAudio":false,"mic":null,"callReminders":false,"updateCheck":true}"#
+        let config = try JSONDecoder().decode(Config.self, from: Data(old.utf8))
+        #expect(config.callNotice && config.autoStop && config.liveTranscript && config.menuBarNextCall && config.jargon.isEmpty)
+        #expect(!config.callReminders && config.myName == "Sam")
+        let again = try JSONDecoder().decode(Config.self, from: Data(encodeJSON(with(config) { $0.autoStop = false; $0.jargon = ["Jetpack"] }).utf8))
+        #expect(!again.autoStop && again.jargon == ["Jetpack"])
+    }
+}
+
+@Suite struct CallTests {
+    @Test func callingApps() {
+        #expect(CallDetector.callingApp("com.google.Chrome.helper") == "Google Chrome")
+        #expect(CallDetector.callingApp("us.zoom.xos") == "Zoom")
+        #expect(CallDetector.callingApp("com.apple.WebKit.GPU") == "Safari")
+        #expect(CallDetector.callingApp("com.apple.CoreSpeech") == nil)
+        #expect(CallDetector.callingApp("local.oatcake.recorder") == nil)
+        #expect(CallDetector.callingApp("com.google.Chromecast") == nil)
+    }
+
+    /// The live transcript drops a microphone line that only repeats the call audio, and reads in time order.
+    @Test func liveLines() {
+        let lines = [
+            LiveTranscriptLine(track: .mic, start: 12.4, end: 15, text: "I think that's fine, do you agree?"),
+            LiveTranscriptLine(track: .system, start: 12, end: 15, text: "I think that's fine, do you agree?"),
+            LiveTranscriptLine(track: .mic, start: 16, end: 17, text: "Yes, sounds good to me."),
+            LiveTranscriptLine(track: .system, start: 2, end: 4, text: "Morning everyone."),
+        ]
+        #expect(liveTranscript(lines).map(\.text) == ["Morning everyone.", "I think that's fine, do you agree?", "Yes, sounds good to me."])
+        #expect(callPlaceholders.contains(callPlaceholder(for: "a")))
+        #expect(callPlaceholder(for: "a") == callPlaceholder(for: "a"))
+    }
+}
+
+private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
+    var copy = value
+    change(&copy)
+    return copy
 }

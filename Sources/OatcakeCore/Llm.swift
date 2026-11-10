@@ -17,6 +17,29 @@ public func makeLlm(_ config: LlmConfig) -> Llm {
     }
 }
 
+/**
+ * A model failure in plain words, with what to do about it. The raw message (a command's exit text,
+ * an API's reply) is shown behind "Details" by the windows; an error that's already plain comes back
+ * unchanged.
+ */
+public func explainModelError(_ raw: String) -> String {
+    let e = raw.lowercased()
+    if e.contains("unrecognized_model") || e.contains("model_not_found") || (e.contains("model") && (e.contains("not found") || e.contains("does not exist") || e.contains("not exist"))) {
+        let model = firstMatch(try! NSRegularExpression(pattern: #""model"\s*:\s*"([^"]+)""#), raw)?[1]
+        return "The model\(model.map { " “\($0)”" } ?? "") isn’t available to this sign-in. Choose another model in Settings › Summaries, then try again."
+    }
+    if e.contains("usage limit") || e.contains("rate limit") || e.contains("rate_limit") || e.contains("429") || e.contains("quota") || e.contains("overloaded") {
+        return "The model is at its usage limit or too busy right now. Try again later, or choose another model in Settings › Summaries."
+    }
+    if e.contains("/login") || e.contains("not logged in") || e.contains("not signed in") || e.contains("invalid api key") || e.contains("authentication") || e.contains("unauthorized") || e.contains(" 401") {
+        return "The sign-in or API key wasn’t accepted. For Claude Code, run claude in Terminal and type /login; for an API key, check it in Settings › Summaries."
+    }
+    if e.contains("could not connect") || e.contains("couldn’t connect") || e.contains("offline") || e.contains("timed out") || e.contains("network") || e.contains("hostname") || e.contains("connection") {
+        return "The model couldn’t be reached. Check your internet connection, or that your local model server is running."
+    }
+    return raw
+}
+
 /// Pulls the first JSON object out of a model reply (tolerates code fences and prose).
 public func parseJsonObject<T: Decodable>(_ type: T.Type, _ text: String) throws -> T {
     guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else {

@@ -49,7 +49,7 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top) {
-            Button { newRecording() } label: {
+            Button { model.newRecording() } label: {
                 Label("New recording", systemImage: "circle.fill")
                     .labelStyle(NewRecordingLabelStyle())
                     .frame(maxWidth: .infinity)
@@ -58,7 +58,7 @@ struct SidebarView: View {
             .buttonStyle(.bordered)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .help("New recording")
+            .help("New recording (⌘N)")
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -113,10 +113,6 @@ struct SidebarView: View {
         }
     }
 
-    private func newRecording(_ event: CalendarEvent? = nil) {
-        model.selection = model.live != nil ? .live : .new(event)
-    }
-
     /// The folders to show, depth first, skipping the inside of closed ones. They're drawn as flat,
     /// indented rows (as the Electron version did) rather than nested disclosure groups, which left
     /// stale highlights and stray rows behind in the sidebar's outline.
@@ -169,36 +165,36 @@ struct SidebarView: View {
         .help("To-dos from every meeting")
     }
 
+    /// Upcoming: the rest of today and tomorrow, timed events only. Its countdowns follow the app's
+    /// half-minute tick. (They used to sit in a TimelineView, but a Section built inside one stops
+    /// SwiftUI with a fatal error in a sidebar list, so the app couldn't open with a calendar set.)
     @ViewBuilder private var upcoming: some View {
         let calendar = model.calendar!
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            let now = context.date
-            let endOfTomorrow = Calendar.current.date(byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: now))!
-            // Upcoming: the rest of today and tomorrow, timed events only.
-            let events = Array(calendar.events.filter { !$0.allDay && $0.endDate > now && $0.startDate < endOfTomorrow }.prefix(6))
-            let next = events.first { $0.startDate > now }
-            Section {
-                ForEach(events) { event in
-                    Button { newRecording(event) } label: { eventRow(event, next: next, now: now) }
-                        .buttonStyle(.plain)
-                        .help("\(event.title) · \(hhmm(event.startDate))–\(hhmm(event.endDate))\(event.callLink.map { " · " + (callApp($0) ?? "") } ?? "")")
+        let now = model.now
+        let endOfTomorrow = Calendar.current.date(byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: now))!
+        let events = Array(calendar.events.filter { !$0.allDay && $0.endDate > now && $0.startDate < endOfTomorrow }.prefix(6))
+        let next = events.first { $0.startDate > now }
+        Section {
+            ForEach(events) { event in
+                Button { model.newRecording(event) } label: { eventRow(event, next: next, now: now) }
+                    .buttonStyle(.plain)
+                    .help("\(event.title) · \(hhmm(event.startDate))–\(hhmm(event.endDate))\(event.callLink.map { " · " + (callApp($0) ?? "") } ?? "")")
+            }
+            if let message = calendarMessage(calendar, events: events) {
+                Text(message).font(.callout).foregroundStyle(calendar.error != nil && calendar.updatedAt == nil ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            }
+        } header: {
+            HStack {
+                Text("Upcoming")
+                Spacer()
+                Button { model.refreshCalendar(force: true) } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .foregroundStyle(calendar.error != nil ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        .symbolEffect(.rotate, isActive: model.calendarFetching)
                 }
-                if let message = calendarMessage(calendar, events: events) {
-                    Text(message).font(.callout).foregroundStyle(calendar.error != nil && calendar.updatedAt == nil ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                }
-            } header: {
-                HStack {
-                    Text("Upcoming")
-                    Spacer()
-                    Button { model.refreshCalendar(force: true) } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundStyle(calendar.error != nil ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                            .symbolEffect(.rotate, isActive: model.calendarFetching)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(model.calendarFetching)
-                    .help("\(calendarTip(calendar)). Refresh now.")
-                }
+                .buttonStyle(.borderless)
+                .disabled(model.calendarFetching)
+                .help("\(calendarTip(calendar)). Refresh now.")
             }
         }
     }
@@ -356,7 +352,9 @@ private struct UpdateNotice: View {
                 if u.installing != nil {
                     ProgressView().controlSize(.small)
                 } else if u.blocked != nil {
+                    // Opens Settings on its Updates pane.
                     SettingsLink { Text("Details") }
+                        .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("updates", forKey: "settingsPane") })
                 } else {
                     Button("Update") { Task { await u.install() } }.buttonStyle(.borderedProminent)
                 }

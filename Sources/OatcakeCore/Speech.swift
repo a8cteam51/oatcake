@@ -113,31 +113,66 @@ final class Transcriber {
         self.asr = asr
     }
 
+    /// Speech is cut into stretches at pauses, 14 s at most.
+    private var segmentation: VadSegmentationConfig {
+        var config = VadSegmentationConfig.default
+        config.minSpeechDuration = 0.25
+        config.minSilenceDuration = 0.4
+        config.maxSpeechDuration = 14
+        return config
+    }
+
+    /// Decodes the speech between two times in `samples`; nil when Parakeet hears no words in it.
+    private func decode(_ samples: [Float], from start: Double, to end: Double) async throws -> Utterance? {
+        let minimum = ASRConstants.minimumRequiredSamples(forSampleRate: sampleRate)
+        var chunk = Array(slice(samples, start, end))
+        // Very short stretches are padded with silence up to the model's minimum.
+        if chunk.count < minimum { chunk += [Float](repeating: 0, count: minimum - chunk.count) }
+        var state = TdtDecoderState.make(decoderLayers: await asr.decoderLayerCount)
+        let result = try await asr.transcribe(chunk, decoderState: &state)
+        let text = result.text.trimmed
+        guard !text.isEmpty else { return nil }
+        let words = buildWordTimings(from: result.tokenTimings ?? []).map {
+            Word(text: $0.word, start: start + $0.startTime, end: start + $0.endTime)
+        }
+        return Utterance(start: start, end: end, text: text, words: words)
+    }
+
     func transcribe(_ samples: [Float], progress: (Double) -> Void) async throws -> [Utterance] {
         guard !samples.isEmpty else { return [] }
-        var segmentation = VadSegmentationConfig.default
-        segmentation.minSpeechDuration = 0.25
-        segmentation.minSilenceDuration = 0.4
-        segmentation.maxSpeechDuration = 14
         let segments = try await vad.segmentSpeech(samples, config: segmentation)
-        let minimum = ASRConstants.minimumRequiredSamples(forSampleRate: sampleRate)
         var utterances: [Utterance] = []
         for (i, segment) in segments.enumerated() {
-            var chunk = Array(slice(samples, segment.startTime, segment.endTime))
-            // Very short stretches are padded with silence up to the model's minimum.
-            if chunk.count < minimum { chunk += [Float](repeating: 0, count: minimum - chunk.count) }
-            var state = TdtDecoderState.make(decoderLayers: await asr.decoderLayerCount)
-            let result = try await asr.transcribe(chunk, decoderState: &state)
-            let text = result.text.trimmed
-            if !text.isEmpty {
-                let words = buildWordTimings(from: result.tokenTimings ?? []).map {
-                    Word(text: $0.word, start: segment.startTime + $0.startTime, end: segment.startTime + $0.endTime)
-                }
-                utterances.append(Utterance(start: segment.startTime, end: segment.endTime, text: text, words: words))
-            }
+            if let utterance = try await decode(samples, from: segment.startTime, to: segment.endTime) { utterances.append(utterance) }
             if i % 10 == 0 { progress(Double(i) / Double(segments.count)) }
         }
         progress(1)
         return utterances
+    }
+
+    /**
+     * For audio still being recorded: decodes the stretches of speech that have finished (a pause
+     * follows them) and says how many of the samples are dealt with. Speech still going at the end
+     * is left for the next call, when more of it has arrived.
+     */
+    func transcribeFinished(_ samples: [Float]) async throws -> (utterances: [Utterance], consumed: Int) {
+        let segments = try await vad.segmentSpeech(samples, config: segmentation)
+        let duration = Double(samples.count) / Double(sampleRate)
+        var utterances: [Utterance] = []
+        var consumed = 0
+        var speaking = false
+        for segment in segments {
+            if segment.endTime > duration - 0.6 {
+                // A little before it starts is kept, so the next call hears its beginning whole.
+                consumed = max(consumed, Int(segment.startTime * Double(sampleRate)) - sampleRate / 4)
+                speaking = true
+                break
+            }
+            if let utterance = try await decode(samples, from: segment.startTime, to: segment.endTime) { utterances.append(utterance) }
+            consumed = min(samples.count, Int((segment.endTime * Double(sampleRate)).rounded(.up)))
+        }
+        // Silence at the end: all but the last second is done with.
+        if !speaking { consumed = max(consumed, samples.count - sampleRate) }
+        return (utterances, consumed)
     }
 }

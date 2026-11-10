@@ -221,7 +221,7 @@ private func pairs(_ w: [String]) -> [String] {
  * a few seconds. Pairs rather than single words, so a short reply made of the same common words
  * ("yes, I agree that's fine" after "I think that's fine, do you agree?") isn't mistaken for echo.
  */
-func isEcho(_ mic: Line, _ systemLines: [Line]) -> Bool {
+public func isEcho(_ mic: Line, _ systemLines: [Line]) -> Bool {
     let own = pairs(words(mic.text))
     guard !own.isEmpty else { return false }
     let nearby = Set(systemLines
@@ -243,6 +243,7 @@ private func suggestFromTranscript(_ config: Config, title: String, lines: [Line
         prompt: [
             "Meeting title: \(title)",
             "People the user has met before: \(known.isEmpty ? "none yet" : known.joined(separator: ", "))",
+            config.jargonLine,
             "Unidentified speakers: \(unknown.map { "Speaker \($0.id)" }.joined(separator: ", "))",
             "",
             "For each unidentified speaker, use evidence in the transcript (being addressed by name,",

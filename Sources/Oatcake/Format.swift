@@ -101,6 +101,31 @@ private func hueFor(_ name: String, remember: Bool) -> Double {
     return hues[index]
 }
 
+/**
+ * Colours for the names on a Who's who screen, where nothing is claimed until the meeting is saved:
+ * someone seen before keeps their colour, and each new name takes the next free one, in the order
+ * saving will then claim them. Without this, every new name would show the same least-used colour.
+ */
+func provisionalColors(_ names: [String]) -> [String: Color] {
+    let all = (UserDefaults.standard.dictionary(forKey: colorsKey) as? [String: Int]) ?? [:]
+    var uses = hues.indices.map { i in all.values.filter { $0 == i }.count }
+    var taken: [String: Int] = [:]
+    var out: [String: Color] = [:]
+    for name in names where !name.trimmed.isEmpty && name.range(of: notAPerson, options: .regularExpression) == nil {
+        let key = (name.trimmed.split(separator: " ").first.map(String.init) ?? name).lowercased()
+        let index: Int
+        if let known = all[key] ?? taken[key], hues.indices.contains(known) {
+            index = known
+        } else {
+            index = uses.firstIndex(of: uses.min()!)!
+            uses[index] += 1
+            taken[key] = index
+        }
+        out[name] = oklch(0.55, 0.15, hues[index])
+    }
+    return out
+}
+
 struct Person {
     var initial: String
     var color: Color

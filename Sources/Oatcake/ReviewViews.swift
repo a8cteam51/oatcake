@@ -119,24 +119,31 @@ final class ClipPlayer: NSObject, AVAudioPlayerDelegate {
     }
 }
 
-/// Who's who: one card per voice, to name, merge or mark as mixed before saving.
+/// Who's who: one card per voice, to name, merge or mark as mixed before saving. The title and the
+/// folder it's saved in can be changed here too.
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
     let rec: Recording
 
-    struct Voice: Equatable {
-        var name: String
-        var mixed = false
-        /// Merged into another voice (`me` for your microphone).
-        var into: String?
-    }
+    typealias Voice = ReviewDraft.Voice
 
     @ViewState private var analysis: Analysis?
     @ViewState private var people: [String] = []
-    @ViewState private var voices: [String: Voice] = [:]
     @ViewState private var showTranscript = false
     @ViewState private var error = ""
+    @ViewState private var saved = false
     @ViewState private var player = ClipPlayer()
+
+    /// What's been set so far lives with the app, so leaving this screen and coming back keeps it.
+    private var draft: ReviewDraft {
+        get { model.reviewDrafts[rec.id] ?? ReviewDraft(title: rec.title, folder: rec.folder ?? "", voices: [:]) }
+        nonmutating set { model.reviewDrafts[rec.id] = newValue }
+    }
+    private var voices: [String: Voice] {
+        get { draft.voices }
+        nonmutating set { draft.voices = newValue }
+    }
+    private var title: String { draft.title.trimmed.isEmpty ? rec.title : draft.title.trimmed }
 
     var body: some View {
         Group {
@@ -162,7 +169,10 @@ struct ReviewView: View {
             let a = try loadAnalysis(rec)
             analysis = a
             people = knownPeople()
-            voices = Dictionary(uniqueKeysWithValues: a.speakers.map { ($0.id, Voice(name: $0.suggestion?.name ?? "")) })
+            if model.reviewDrafts[rec.id] == nil {
+                draft = ReviewDraft(title: rec.title, folder: rec.folder ?? "",
+                                    voices: Dictionary(uniqueKeysWithValues: a.speakers.map { ($0.id, Voice(name: $0.suggestion?.name ?? "")) }))
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -180,38 +190,54 @@ struct ReviewView: View {
         return v.mixed ? "Several people" : v.name.trimmed.isEmpty ? label(analysis, id) : v.name.trimmed
     }
 
+    /// Everyone named here, you first and then by talking time: the order their colours are given in.
+    private func names(_ analysis: Analysis) -> [String] {
+        [myName] + analysis.speakers.map { nameOf(analysis, $0.id) }
+    }
+
     @ToolbarContentBuilder private func toolbar(_ analysis: Analysis) -> some ToolbarContent {
         let unnamed = analysis.speakers.filter { voices[$0.id]?.into == nil && voices[$0.id]?.mixed == false && (voices[$0.id]?.name.trimmed.isEmpty ?? true) }.count
         ToolbarItem(placement: .principal) {
-            (Text("Who’s who").fontWeight(.semibold) + Text(" · \(rec.title)").foregroundStyle(.secondary)).lineLimit(1)
+            (Text("Who’s who").fontWeight(.semibold) + Text(" · \(title)").foregroundStyle(.secondary)).lineLimit(1)
         }
         ToolbarItemGroup(placement: .automatic) {
             Toggle(isOn: $showTranscript) { Text("Transcript") }.toggleStyle(.button)
-            Button("Discard…") { model.discard(rec) }.disabled(saving)
-            if unnamed > 0 && !saving {
+            Button("Discard…") { model.discard(rec) }.disabled(saved)
+            if unnamed > 0 {
                 Text("\(unnamed) voice\(unnamed == 1 ? "" : "s") unnamed").font(.callout).foregroundStyle(.secondary)
                     .help("Unnamed voices are saved as “Voice 1”, “Voice 2”…")
             }
             Button("Save") { save(analysis) }
                 .buttonStyle(.borderedProminent)
-                .disabled(saving)
-                .help("Save names and write the summary")
+                .disabled(saved)
+                .help("Save the meeting. Its summary is written straight after.")
         }
     }
 
     private func cards(_ analysis: Analysis) -> some View {
         let visible = analysis.speakers.filter { voices[$0.id]?.into == nil }
         let meTalk = analysis.me?.seconds ?? analysis.lines.filter { $0.speaker == me }.reduce(0) { $0 + $1.end - $1.start }
+        let colors = provisionalColors(names(analysis))
+        let folders = (model.tree?.allFolders ?? []).map(\.path)
         return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(pathAbove(rec.folder ?? "", rec.title)).foregroundStyle(.secondary)
-                PageTitle(text: rec.title, size: 22)
+                Picker("Folder", selection: Binding(get: { draft.folder }, set: { draft.folder = $0 })) {
+                    Text("Meetings (top level)").tag("")
+                    ForEach(folders, id: \.self) { Text(folderPath($0)).tag($0) }
+                    // The folder it was recorded for has since gone: saving makes it again.
+                    if !draft.folder.isEmpty && !folders.contains(draft.folder) { Text(folderPath(draft.folder)).tag(draft.folder) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .padding(.leading, -8)
+                .help("The folder this meeting is saved in")
+                TextField("Title", text: Binding(get: { draft.title }, set: { draft.title = $0 }), prompt: Text(rec.title))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 22, weight: .bold))
+                    .help("The meeting’s title")
                 Text(recordingMeta(rec)).foregroundStyle(.secondary)
                 Text("Check who’s who before saving. Names label the transcript, and Oatcake remembers these voices next time.")
                     .foregroundStyle(.secondary).padding(.top, 8)
-            }
-            if saving, let step = model.saveStep[rec.id] {
-                Notice(tone: .blue) { Text(step == "Saving voiceprints" || step == "Saving" ? "Saving…" : "\(step)…") }
             }
             if !error.isEmpty { Notice(tone: .red) { Text(error) } }
             if analysis.speakers.isEmpty {
@@ -220,11 +246,20 @@ struct ReviewView: View {
                     Text("Only your microphone picked anything up. If people were talking on the call, check that OatcakeRecorder is allowed in System Settings › Privacy & Security › Screen & System Audio Recording.")
                 }
             }
-            ForEach(analysis.warnings, id: \.self) { w in Notice(tone: .amber) { Text(w) } }
+            ForEach(analysis.warnings, id: \.self) { w in
+                Notice(tone: .amber) {
+                    // "Name suggestions skipped: <what the model said>", in plain words.
+                    if let colon = w.range(of: "skipped: ") {
+                        ModelError(raw: String(w[colon.upperBound...]), prefix: "Names weren’t suggested for this call. ")
+                    } else {
+                        Text(w)
+                    }
+                }
+            }
 
             card {
                 HStack(spacing: 10) {
-                    Avatar(name: myName, size: 30)
+                    Avatar(name: myName, size: 30, remember: false, color: colors[myName])
                     VStack(alignment: .leading, spacing: 1) {
                         Text("\(myName) · your microphone").fontWeight(.semibold)
                         Text("\(minutes(meTalk)) talking").font(.callout).foregroundStyle(.secondary)
@@ -233,7 +268,7 @@ struct ReviewView: View {
                 if let quotes = analysis.me?.quotes, !quotes.isEmpty { clips(quotes) }
                 Text("Labelled with your name from Settings.").font(.callout).foregroundStyle(.secondary)
             }
-            ForEach(visible, id: \.id) { s in voiceCard(analysis, s, visible: visible) }
+            ForEach(visible, id: \.id) { s in voiceCard(analysis, s, visible: visible, colors: colors) }
         }
     }
 
@@ -245,7 +280,7 @@ struct ReviewView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.line))
     }
 
-    private func voiceCard(_ analysis: Analysis, _ s: SpeakerInfo, visible: [SpeakerInfo]) -> some View {
+    private func voiceCard(_ analysis: Analysis, _ s: SpeakerInfo, visible: [SpeakerInfo], colors: [String: Color]) -> some View {
         let v = voices[s.id] ?? Voice(name: "")
         let shown = v.mixed ? "Several people" : v.name.trimmed.isEmpty ? label(analysis, s.id) : v.name.trimmed
         let absorbed = analysis.speakers.filter { voices[$0.id]?.into == s.id }
@@ -253,7 +288,7 @@ struct ReviewView: View {
         let targets = visible.filter { $0.id != s.id && voices[$0.id]?.mixed != true }
         return card {
             HStack(spacing: 10) {
-                Avatar(name: shown, size: 30, remember: false, color: v.mixed ? Color(nsColor: .systemGray) : nil)
+                Avatar(name: shown, size: 30, remember: false, color: v.mixed ? Color(nsColor: .systemGray) : colors[shown])
                 VStack(alignment: .leading, spacing: 1) {
                     Text(shown).fontWeight(.semibold)
                     Text("\(v.name.trimmed.isEmpty && !v.mixed ? "" : "\(label(analysis, s.id)) · ")\(minutes(s.seconds)) talking")
@@ -341,7 +376,8 @@ struct ReviewView: View {
     }
 
     private func transcript(_ analysis: Analysis) -> some View {
-        ScrollView {
+        let colors = provisionalColors(names(analysis))
+        return ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     SectionLabel(text: "Transcript")
@@ -350,10 +386,9 @@ struct ReviewView: View {
                 }
                 ForEach(Array(analysis.lines.enumerated()), id: \.offset) { _, l in
                     let name = nameOf(analysis, l.speaker)
-                    let p = person(name, remember: false)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
-                            Text(name).fontWeight(.semibold).foregroundStyle(p.isPerson ? p.color : .secondary)
+                            Text(name).fontWeight(.semibold).foregroundStyle(colors[name].map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                             Text(clock(l.start)).foregroundStyle(.tertiary).monospacedDigit()
                         }
                         .font(.caption)
@@ -366,39 +401,34 @@ struct ReviewView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    /// Kept by the app rather than this screen, so Save and Discard stay off while a save runs even
-    /// if you look at something else and come back.
-    private var saving: Bool { model.saveStep[rec.id] != nil }
-
+    /// Saving writes the meeting straight away; its summary is then written in the background and
+    /// appears in the meeting when it's ready.
     private func save(_ analysis: Analysis) {
         error = ""
-        model.saveStep[rec.id] = "Saving"
         // An unnamed voice is sent with no name: it's saved as "Voice N" but never remembered as a person.
         let decisions = voices.mapValues { v -> Decision in
             if let into = v.into { return .merge(into: into) }
             return v.mixed ? .mixed : .name(v.name.trimmed)
         }
-        Task {
-            do {
-                let folder = rec.folder ?? ""
-                let saved = try await model.saveRecording(rec, decisions: decisions, folder: folder)
-                let path = saved.path
-                player.stop()
-                model.refresh()
-                // Still here: show the meeting. If you've moved on (say, to the next call's notes), you stay there.
-                if model.selection == .job(rec.id) {
-                    model.folder = parentOf(path)
-                    // The tree reloads in the background; open the meeting once it's there.
-                    for _ in 0..<40 where model.tree?.find(path) == nil {
-                        try? await Task.sleep(for: .milliseconds(50))
-                    }
-                    if model.selection == .job(rec.id) { model.openMeeting(path) }
+        let folder = draft.folder
+        let everyone = names(analysis)
+        do {
+            let path = try model.saveRecording(rec, decisions: decisions, folder: folder, title: title)
+            saved = true
+            // Colours are claimed in the order this screen showed them, so nobody changes colour on saving.
+            for name in everyone { _ = person(name) }
+            player.stop()
+            model.refresh()
+            model.toast("Saved to \(folderPath(folder))")
+            Task {
+                // The tree reloads in the background; open the meeting once it's there, unless you've moved on.
+                for _ in 0..<40 where model.tree?.find(path) == nil {
+                    try? await Task.sleep(for: .milliseconds(50))
                 }
-                model.toast(saved.summaryError == nil ? "Saved to \(folderPath(folder))"
-                            : "Saved to \(folderPath(folder)), without a summary for now")
-            } catch {
-                self.error = error.localizedDescription
+                if model.selection == .job(rec.id) { model.openMeeting(path) }
             }
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

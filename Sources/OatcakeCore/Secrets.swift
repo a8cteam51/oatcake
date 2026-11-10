@@ -8,12 +8,12 @@ import Security
 public enum SecretName: String, CaseIterable, Sendable {
     case anthropic, openai, calendar
 
-    /// A key already in the environment when Oatcake started (e.g. from your shell) is the fallback.
-    var environmentVariable: String? {
+    /// One already in the environment when Oatcake started (e.g. from your shell) is the fallback.
+    var environmentVariable: String {
         switch self {
         case .anthropic: "ANTHROPIC_API_KEY"
         case .openai: "OATCAKE_OPENAI_API_KEY"
-        case .calendar: nil
+        case .calendar: "OATCAKE_CALENDAR_URL"
         }
     }
 }
@@ -24,15 +24,14 @@ public enum Secrets {
     /// The saved value, or the one inherited from the environment, or "".
     public static func get(_ name: SecretName) -> String {
         if let saved = keychainRead(account: name.rawValue), !saved.isEmpty { return saved }
-        if let env = name.environmentVariable, let value = ProcessInfo.processInfo.environment[env] { return value }
-        return ""
+        return ProcessInfo.processInfo.environment[name.environmentVariable] ?? ""
     }
 
     /// What Settings shows: whether one is saved, and enough to recognise it.
     public static func describe(_ name: SecretName) -> (saved: Bool, hint: String) {
         guard let value = keychainRead(account: name.rawValue), !value.isEmpty else {
-            let inherited = name.environmentVariable.flatMap { ProcessInfo.processInfo.environment[$0] }
-            return (false, inherited != nil ? "Using the key from your shell" : "")
+            let inherited = ProcessInfo.processInfo.environment[name.environmentVariable]
+            return (false, inherited != nil ? "Using the \(name == .calendar ? "address" : "key") from your shell" : "")
         }
         if name == .calendar {
             let host = URL(string: value.replacingOccurrences(of: "webcal:", with: "https:", options: [.anchored, .caseInsensitive]))?.host

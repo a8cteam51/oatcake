@@ -10,6 +10,16 @@ func readPcm(_ url: URL) -> [Float] {
     }
 }
 
+/// The samples of a raw PCM16 file from one sample onwards: what a recording still being written has gained since.
+func readPcm(_ url: URL, fromSample: Int) -> [Float] {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+    defer { try? handle.close() }
+    guard (try? handle.seek(toOffset: UInt64(fromSample) * 2)) != nil, let data = try? handle.readToEnd() else { return [] }
+    return data.withUnsafeBytes { raw in
+        raw.bindMemory(to: Int16.self).map { Float(Int16(littleEndian: $0)) / 32768 }
+    }
+}
+
 /// The samples between two times in seconds, clamped to the track.
 func slice(_ samples: [Float], _ start: Double, _ end: Double) -> ArraySlice<Float> {
     let from = max(0, min(samples.count, Int((start * Double(sampleRate)).rounded(.down))))

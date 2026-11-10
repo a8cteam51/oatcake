@@ -20,23 +20,17 @@ public func loadAnalysis(_ rec: Recording) throws -> Analysis {
     try readJSON(Analysis.self, rec.dir.appendingPathComponent("analysis.json"))
 }
 
-public struct SavedMeeting: Sendable {
-    /// The meeting's folder, relative to the Meetings folder.
-    public var path: String
-    /// Why the summary couldn't be written (the meeting was saved without one), if it couldn't.
-    public var summaryError: String?
-}
-
 /**
- * Writes the meeting folder (summary.md, transcript.md, notes.md, todo.md, meeting.json) into
- * `folder` (relative to the Meetings folder) and saves confirmed voiceprints. When the summary model
- * can't be reached, everything else is still saved, and the meeting offers to write its summary
- * later (writeSummary), so nothing from the call waits on the model.
+ * Writes the meeting folder (transcript.md, notes.md, meeting.json) into `folder` (relative to the
+ * Meetings folder) and saves confirmed voiceprints. Returns the meeting's path. No model is involved:
+ * the summary and to-dos are written afterwards (writeSummary), so nothing from the call waits on one.
+ * `title` replaces the one the recording was started with.
  */
-public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: Decision], folder: String,
-                        onStep: (String) -> Void) async throws -> SavedMeeting {
+@discardableResult
+public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: Decision], folder: String, title: String? = nil) throws -> String {
     let analysis = try loadAnalysis(rec)
     let notes = Recordings.loadNotes(rec.id)
+    let title = title.map(\.trimmed).flatMap { $0.isEmpty ? nil : $0 } ?? analysis.title
 
     /// The decision a voice ends up with once merges are followed (nil for your microphone).
     func settled(_ id: String, _ seen: Set<String> = []) -> (id: String, decision: Decision?)? {
@@ -72,16 +66,8 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
     }
     let transcript = paragraphs.map { "**[\(clock($0.start))] \($0.speaker):** \($0.text)" }.joined(separator: "\n\n") + "\n"
 
-    onStep("Writing the summary")
-    var summary = "", todo = "", summaryError: String?
-    do {
-        (summary, todo) = try await summarise(config, title: analysis.title, participants: participants, notes: notes, transcript: transcript)
-    } catch {
-        summaryError = error.localizedDescription
-    }
-
     let startedAt = parseISO(analysis.startedAt) ?? rec.startedAt
-    let name = meetingFolderName(title: analysis.title, startedAt: startedAt)
+    let name = meetingFolderName(title: title, startedAt: startedAt)
     // Another call with the same title in the same minute keeps its folder, and this one is numbered.
     // Saving this recording again (after a failure) goes back into its own folder.
     var outRel = folder.isEmpty ? name : folder + "/" + name
@@ -94,8 +80,6 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
     }
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     try transcript.write(to: out.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
-    if summaryError == nil { try summary.write(to: out.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8) }
-    if !todo.isEmpty { try todo.write(to: out.appendingPathComponent("todo.md"), atomically: true, encoding: .utf8) }
     if !notes.isEmpty { try notesMarkdown(notes).write(to: out.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8) }
     struct Meta: Encodable {
         var title: String
@@ -104,13 +88,12 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
         var participants: [String]
         var recording: String
     }
-    try (try encodeJSON(Meta(title: analysis.title, startedAt: analysis.startedAt, endedAt: analysis.endedAt,
+    try (try encodeJSON(Meta(title: title, startedAt: analysis.startedAt, endedAt: analysis.endedAt,
                              participants: participants, recording: rec.id)) + "\n")
         .write(to: out.appendingPathComponent("meeting.json"), atomically: true, encoding: .utf8)
 
-    // Only now the meeting is written, so a failed summary that's retried doesn't add the same voices twice.
+    // Only now the meeting is written, so a save that's retried doesn't add the same voices twice.
     // Fingerprints from another model (an analysis made by the Electron version) aren't kept.
-    onStep("Saving voiceprints")
     if analysis.embeddingModel == voiceprintModel {
         try addVoiceprints(analysis.speakers.compactMap { s in
             guard let name = rememberedName(s.id), let embedding = s.embedding, s.seconds >= minVoiceprintSeconds else { return nil }
@@ -120,12 +103,20 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
 
     try writeAtomic(rec.dir.appendingPathComponent("saved.json"), try encodeJSON(["meeting": outRel]) + "\n")
     if !config.keepAudio { Recordings.deleteAudio(rec) }
-    return SavedMeeting(path: outRel, summaryError: summaryError)
+    return outRel
+}
+
+/// The recording a meeting folder was saved from: nil when there's no meeting there, "" for a
+/// meeting that names none (a Granola import, or a meeting.json that can't be read).
+private func savedRecording(_ meeting: URL) -> String? {
+    guard let data = try? Data(contentsOf: meeting.appendingPathComponent("meeting.json")) else { return nil }
+    return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["recording"] as? String ?? ""
 }
 
 /**
- * Writes the summary and to-dos of a meeting saved without them (the model couldn't be reached), from
- * its transcript, your notes and meeting.json. To-dos already in todo.md are kept.
+ * Writes a saved meeting's summary and to-dos from its transcript, your notes and meeting.json. It
+ * runs after every save, and again from Write summary when the model couldn't be reached. To-dos
+ * already in todo.md are kept.
  */
 public func writeSummary(_ config: Config, meeting rel: String) async throws {
     let meetings = Meetings(root: config.meetingsRoot)
@@ -144,17 +135,17 @@ public func writeSummary(_ config: Config, meeting rel: String) async throws {
     }
 }
 
-/// The recording a meeting folder was saved from: nil when there's no meeting there, "" for a
-/// meeting that names none (a Granola import, or a meeting.json that can't be read).
-private func savedRecording(_ meeting: URL) -> String? {
-    guard let data = try? Data(contentsOf: meeting.appendingPathComponent("meeting.json")) else { return nil }
-    return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["recording"] as? String ?? ""
-}
+/// A paragraph of the transcript runs for about this long at most before the next pause starts a new one.
+private let longestParagraph = 30.0
 
+/**
+ * Consecutive lines from one speaker read as one paragraph. A long turn breaks at a pause about every
+ * half minute, so each part has its own time to jump to (lines arrive split at pauses already).
+ */
 private func mergeRuns(_ lines: [Line]) -> [Line] {
     var out: [Line] = []
     for l in lines {
-        if let last = out.last, last.speaker == l.speaker, l.start - last.end < 3 {
+        if let last = out.last, last.speaker == l.speaker, l.start - last.end < 3, l.end - last.start <= longestParagraph {
             out[out.count - 1].text += " " + l.text
             out[out.count - 1].end = l.end
         } else {
@@ -187,6 +178,7 @@ private func summarise(_ config: Config, title: String, participants: [String], 
         prompt: [
             "Meeting: \(title)",
             "Participants: \(participants.joined(separator: ", "))",
+            config.jargonLine,
             "",
             notesBlock,
             "",

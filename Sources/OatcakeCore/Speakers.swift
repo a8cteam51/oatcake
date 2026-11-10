@@ -106,6 +106,8 @@ func addVoiceprints(_ entries: [(name: String, embedding: [Float])], call: Strin
     var prints = Voiceprints.load()
     for entry in entries {
         var person = prints.people[entry.name] ?? Voiceprints.Person(samples: [])
+        // One fingerprint per call: saving the same recording again replaces its own.
+        person.samples.removeAll { $0.call == call }
         person.samples.append(.init(embedding: entry.embedding, call: call, at: isoString(Date())))
         person.samples = Array(person.samples.suffix(maxSamplesPerPerson))
         prints.people[entry.name] = person

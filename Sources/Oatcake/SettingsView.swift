@@ -3,87 +3,139 @@ import SwiftUI
 
 private let effortHint = "Higher thinks longer: more careful summaries and name guesses, but slower and more usage."
 
-/// The Settings window. Every change is saved as it's made; there's no Save button.
+/// The Settings window, in panes. Every change is saved as it's made; there's no Save button.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @ViewState private var devices: [InputDevice]?
+    @ViewState private var jargon = ""
+    @AppStorage("settingsPane") private var pane = "general"
 
     var body: some View {
-        let config = model.config
-        Form {
-            Section("You") {
-                TextField("Your name", text: bind(\.myName))
-                Text("Labels your microphone track in every transcript.").settingsHint()
-            }
-
-            Section("Recording") {
-                LabeledContent("Microphone") { MicPicker(devices: devices ?? []).frame(width: 270) }
-                if let devices {
-                    let hint = micHint(config.mic, devices)
-                    Text(hint.text).settingsHint(hint.color)
-                }
-                Toggle(isOn: bind(\.keepAudio)) {
-                    Text("Keep call audio after saving")
-                    Text("When off, the audio is deleted once a meeting is saved. The transcript, notes and summary stay.")
-                }
-            }
-
-            Section("Storage") {
-                LabeledContent {
-                    Button("Choose…") { model.chooseMeetingsFolder() }
-                } label: {
-                    Text("Meetings folder")
-                    Text(shortPath(config.outputDir)).font(.system(.caption, design: .monospaced)).help(config.outputDir)
-                }
-                GranolaRow()
-            }
-
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Private iCal address")
-                    SecretField(name: .calendar, placeholder: "https://calendar.google.com/calendar/ical/…/basic.ics")
-                    Text(calendarStatus).settingsHint(model.calendar?.error != nil ? .red : .secondary)
-                }
-                Toggle(isOn: bind(\.callReminders)) {
-                    Text("Remind me before calls")
-                    Text("5 minutes before each call, a notification with a button that opens the call and starts recording, ready for notes.")
-                }
-            } header: {
-                Text("Calendar")
-            } footer: {
-                Text("In Google Calendar, open Settings, pick your calendar under “Settings for my calendars”, then copy “Secret address in iCal format” from the Integrate calendar section. Without one, Upcoming is hidden.")
-                    .settingsHint()
-            }
-
-            Section {
-                Picker("Speech to text", selection: bind(\.asrModel)) {
-                    ForEach(SpeechModels.asr, id: \.key) { choice in
-                        VStack(alignment: .leading) {
-                            Text(choice.title)
-                            Text(choice.detail).settingsHint()
-                        }
-                        .tag(choice.key)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-            } header: {
-                Text("Transcription")
-            } footer: {
-                Text("Runs on your Mac. Audio never leaves it for transcription.").settingsHint()
-            }
-
-            PeopleSection()
-            llmSection
-            UpdatesSection()
+        TabView(selection: $pane) {
+            Form { general }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            Form { calendar }.formStyle(.grouped).tabItem { Label("Calendar", systemImage: "calendar") }.tag("calendar")
+            Form { PeopleSection() }.formStyle(.grouped).tabItem { Label("People", systemImage: "person.2") }.tag("people")
+            Form { transcription }.formStyle(.grouped).tabItem { Label("Transcription", systemImage: "waveform") }.tag("transcription")
+            Form { llmSection; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
+            Form { UpdatesSection() }.formStyle(.grouped).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
         }
-        .formStyle(.grouped)
-        .frame(width: 620, height: 700)
+        .frame(width: 620, height: 540)
         .task { devices = (try? await Recordings.listInputs()) ?? [] }
         .onAppear {
+            jargon = model.config.jargon.joined(separator: ", ")
             // The Electron version's names for the two transcription choices read as the new ones.
             let key = SpeechModels.asrChoice(model.config.asrModel).key
             if key != model.config.asrModel { model.saveConfig(with(model.config) { $0.asrModel = key }) }
+        }
+    }
+
+    @ViewBuilder private var general: some View {
+        let config = model.config
+        Section("You") {
+            TextField("Your name", text: bind(\.myName))
+            Text("Labels your microphone track in every transcript.").settingsHint()
+        }
+
+        Section("Recording") {
+            LabeledContent("Microphone") { MicPicker(devices: devices ?? []).frame(width: 270) }
+            if let devices {
+                let hint = micHint(config.mic, devices)
+                Text(hint.text).settingsHint(hint.color)
+            }
+            Toggle(isOn: bind(\.liveTranscript)) {
+                Text("Live transcript")
+                Text("Shows what’s being said beside your notes during the call. It’s transcribed on your Mac; who said what on the call side is worked out afterwards.")
+            }
+            Toggle(isOn: bind(\.keepAudio)) {
+                Text("Keep call audio after saving")
+                Text("When off, the audio is deleted once a meeting is saved. The transcript, notes and summary stay.")
+            }
+        }
+
+        Section {
+            Toggle(isOn: bind(\.callNotice)) {
+                Text("Offer to record when a call starts")
+                Text("A notification with a Start recording button when a calling app or browser starts using your microphone.")
+            }
+            Toggle(isOn: bind(\.autoStop)) {
+                Text("Stop recording when the call ends")
+                Text("Once the calling app has let go of your microphone and the call audio has been quiet for 15 seconds.")
+            }
+        } header: {
+            Text("Calls")
+        } footer: {
+            Text("Oatcake notices a call by which apps have the microphone open. It doesn’t listen until you record.").settingsHint()
+        }
+
+        Section("Storage") {
+            LabeledContent {
+                Button("Choose…") { model.chooseMeetingsFolder() }
+            } label: {
+                Text("Meetings folder")
+                Text(shortPath(config.outputDir)).font(.system(.caption, design: .monospaced)).help(config.outputDir)
+            }
+            GranolaRow()
+        }
+    }
+
+    @ViewBuilder private var calendar: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Private iCal address")
+                SecretField(name: .calendar, placeholder: "https://calendar.google.com/calendar/ical/…/basic.ics")
+                Text(calendarStatus).settingsHint(model.calendar?.error != nil ? .red : .secondary)
+            }
+            Toggle(isOn: bind(\.callReminders)) {
+                Text("Remind me before calls")
+                Text("5 minutes before each call, a notification with a button that opens the call and starts recording, ready for notes.")
+            }
+            Toggle(isOn: bind(\.menuBarNextCall)) {
+                Text("Show my next call in the menu bar")
+                Text("The time until it starts, with what’s coming up in its menu. Oatcake then stays in the menu bar when its window is closed.")
+            }
+        } header: {
+            Text("Calendar")
+        } footer: {
+            Text("In Google Calendar, open Settings, pick your calendar under “Settings for my calendars”, then copy “Secret address in iCal format” from the Integrate calendar section. Without one, Upcoming is hidden.")
+                .settingsHint()
+        }
+    }
+
+    @ViewBuilder private var transcription: some View {
+        Section {
+            Picker("Speech to text", selection: bind(\.asrModel)) {
+                ForEach(SpeechModels.asr, id: \.key) { choice in
+                    VStack(alignment: .leading) {
+                        Text(choice.title)
+                        Text(choice.detail).settingsHint()
+                    }
+                    .tag(choice.key)
+                }
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+        } header: {
+            Text("Transcription")
+        } footer: {
+            Text("Runs on your Mac. Audio never leaves it for transcription.").settingsHint()
+        }
+    }
+
+    /// Typed as one comma-separated line; kept as a list.
+    @ViewBuilder private var jargonSection: some View {
+        Section {
+            TextField("Jargon", text: $jargon, prompt: Text("Automattic, WooCommerce, Jetpack"), axis: .vertical)
+                .lineLimit(2...5)
+                .labelsHidden()
+                .onChange(of: jargon) {
+                    let terms = jargon.split(whereSeparator: { $0 == "," || $0.isNewline }).map { String($0).trimmed }.filter { !$0.isEmpty }
+                    if terms != model.config.jargon { model.saveConfig(with(model.config) { $0.jargon = terms }) }
+                }
+        } header: {
+            Text("Jargon")
+        } footer: {
+            Text("Names, products and acronyms, separated by commas. Summaries, to-dos, name suggestions and answers spell them as written here. Transcripts keep what the speech model heard.")
+                .settingsHint()
         }
     }
 
@@ -164,15 +216,21 @@ struct SettingsView: View {
         } header: {
             Text("Summaries and name suggestions")
         } footer: {
-            Text(llmFoot(llm.provider)).settingsHint()
+            llmFoot(llm.provider).settingsHint(llm.provider == .claudeCode && !claudeInstalled ? .amber : .secondary)
         }
     }
 
-    private func llmFoot(_ provider: LlmProvider) -> String {
+    private var claudeInstalled: Bool { ShellEnvironment.which("claude") != nil }
+
+    /// What the provider needs. For Claude Code: which sign-in it is, and how to get one.
+    private func llmFoot(_ provider: LlmProvider) -> Text {
         switch provider {
-        case .claudeCode: "Uses your Claude Code sign-in on this Mac. No API key needed."
-        case .anthropic: "Billed to your Anthropic account. The key is kept in your Keychain."
-        case .openaiCompatible: "Any server that speaks the OpenAI chat API, such as Ollama or LM Studio. Name suggestions need a model that follows instructions well."
+        case .claudeCode:
+            claudeInstalled
+                ? Text("Uses the sign-in of Claude Code, Anthropic’s command-line tool, on this Mac. The Claude desktop app’s sign-in is separate and isn’t used. To sign in or switch account, run `claude` in Terminal and type `/login`. No API key needed.")
+                : Text("Claude Code isn’t installed on this Mac. It’s Anthropic’s command-line tool, separate from the Claude desktop app: install it from [claude.com/claude-code](https://claude.com/claude-code), then run `claude` in Terminal once to sign in. Or choose another provider above.")
+        case .anthropic: Text("Billed to your Anthropic account. The key is kept in your Keychain.")
+        case .openaiCompatible: Text("Any server that speaks the OpenAI chat API, such as Ollama or LM Studio. Name suggestions need a model that follows instructions well.")
         }
     }
 

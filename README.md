@@ -56,7 +56,9 @@ never audio.
 
 The window has three columns: the sidebar (a recording in progress, Upcoming from your
 calendar, Needs review, and your folders), the meetings in the selected folder, and the
-meeting itself. Settings (⌘,) is its own window; changes apply as you make them.
+meeting itself. Settings (⌘,) is its own window, in panes; changes apply as you make them.
+⌘N starts a new recording, ⌥⌘F searches every meeting's title, folder and summary from the box
+above the meeting list, and ⌘F finds words in the transcript you're reading.
 
 1. **Record.** New recording, or click an event under Upcoming. Pick the folder (a calendar
    event picks the folder named like it, or offers a new one for a recurring event); leave
@@ -74,6 +76,24 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    mid-call carries on recording, with the switch filled with silence so your track stays
    lined up with the call. You're warned after 30 seconds of a silent mic or no call audio.
    Stop asks first.
+
+   Beside your notes, **Transcript** shows the call as it's said, a moment after each pause
+   (a second helper, `Oatcake --live`, transcribes the audio as the recorder writes it). Your
+   lines are yours; everyone on the call side shares one obviously made-up name ("Mystery
+   Guest", "Captain Placeholder"…) until the call is over and the voices are told apart.
+   Settings › General turns the live transcript off.
+
+   **Calls are noticed.** When a calling app or a browser starts using your microphone and
+   nothing is being recorded, a notification offers **Start recording** (under the calendar
+   event happening now, if there is one). A recording that has had a calling app on the
+   microphone stops by itself once that app has let go and the call audio has been quiet for 15
+   seconds, and starts processing; music still playing, or a call you're only muted on, keeps
+   it going. Oatcake tells which apps have a microphone open from Core Audio
+   (`Sources/OatcakeCore/CallDetector.swift`); it doesn't listen until you record. Both are
+   switches in Settings › General.
+
+   While a call is being recorded the **menu bar** shows its running time, with Stop in its
+   menu.
 2. **Process (on this Mac, in the background).** Parakeet transcribes both tracks. The call
    audio is split into voices by FluidAudio's batch diariser (pyannote segmentation, WeSpeaker
    fingerprints, VBx clustering). It runs as a helper process (`Oatcake --analyse`), so a
@@ -82,7 +102,8 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    from the conversation by the summary model, quoting the words that gave it away. The
    recording waits under Needs review with its step (1–5); a failure shows the reason, with
    Try again and Discard.
-3. **Review (Who's who).** One card per voice: play its clips, confirm or type the name
+3. **Review (Who's who).** Change the title or the folder it's saved in if you want to. One card
+   per voice: play its clips, confirm or type the name
    (with where the suggestion came from), merge it into another voice or into you, or mark
    it as mixed ("Several people"). Unnamed voices are saved as "Voice 1", "Voice 2"… The
    transcript beside it updates as you name voices. Confirmed voices with 30+ seconds of
@@ -91,9 +112,13 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    `2026-11-05 1400 Weekly sync/` with `summary.md`, `todo.md` (action items, as
    `- [ ] Task — Owner — due Fri, Oct 30 — [12:34]`), `transcript.md`, `notes.md` (your own
    notes, untouched; prep notes have no time) and `meeting.json` (title, times,
-   participants). If the summary model can't be reached (Claude Code signed out, no network, a
-   local server that's down), the meeting is saved anyway with its transcript and notes, and
-   shows **Write summary** to write the summary and to-dos later. Your notes steer what the summary focuses on but aren't copied into it.
+   participants). Saving doesn't involve the summary model: the meeting is written straight
+   away with its transcript and notes, and its summary and to-dos are written in the background
+   and appear in the meeting when they're ready. If the model can't be reached (Claude Code
+   signed out, no network, a local server that's down), the meeting says why in plain words
+   (the raw message is behind Details) and shows **Write summary** to try again later. Your notes
+   steer what the summary focuses on but aren't copied into it. A long turn in the transcript is
+   broken at a pause about every half minute, each part with its own time.
    Tabs: Summary (with the meeting's to-dos at the top), Transcript and My notes (⌘1–⌘3),
    each Rendered or as editable Markdown (saved as you type; Summary shows `todo.md` and
    `summary.md`). Tick to-dos off in place; a to-do's time jumps to that moment in the
@@ -105,7 +130,8 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    owned by you unless you name someone. Type owner and due date after dashes:
    `Send the deck - Alex - due Fri, Nov 6`. The middle column's width drags, like the
    sidebar's. Organise meetings by dragging them onto folders, or
-   right-click to rename or trash; Finder and the app stay in step.
+   right-click to rename or trash; Finder and the app stay in step. Renaming a meeting changes
+   its title (in `meeting.json`) and its folder's name, which keeps its date.
 5. **Ask.** The lozenge at the bottom of a meeting takes questions about it ("what did we
    decide about hiring?") or across meetings ("when did Alex first raise the launch date?").
    It runs Claude Code (`claude -p`) in your Meetings folder with read-only file tools
@@ -237,6 +263,12 @@ publishing it, serve a folder holding a zip and its `latest.json` and start Oatc
 `OATCAKE_UPDATE_FEED=http://127.0.0.1:8000/latest.json`; `install.sh` takes `OATCAKE_FEED` the
 same way. With either, the zip is fetched from beside the manifest.
 
+Three more environment variables help when trying things out: `OATCAKE_DATA_DIR` points a
+development copy at another data folder (not another Keychain: don't type real keys into one);
+`OATCAKE_CALENDAR_URL` gives it a calendar address without saving one (a local `.ics` served over
+HTTP will do); and `OATCAKE_CALL_APPS` names a file listing the apps to treat as on a call, one
+per line, so the call notice and the automatic stop can be tried without making a call.
+
 ## Speech models
 
 FluidAudio is pinned to an exact version in `Package.swift`, with only its diarisation trait
@@ -284,6 +316,11 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
 - **Keep call audio:** off by default; audio is deleted once a meeting is saved.
+- **Live transcript**, **Offer to record when a call starts**, **Stop recording when the call
+  ends:** all on by default (Settings › General); see Record above.
+- **Jargon** (Settings › Summaries): names, products and acronyms, separated by commas. The
+  summary model is told to spell them as written, in summaries, to-dos, name suggestions and Ask's
+  answers. Transcripts keep what the speech model heard.
 - **People:** the voices Oatcake recognises. **Rename** one ("Nate" to "Nate Allen") to change the
   name it suggests from now on; renaming to a name that's already there makes them one person.
   **Forget** stops it recognising them. Meetings already saved keep the names they were saved
@@ -299,6 +336,10 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   with none; "Join the call" opens its Meet, Zoom or Teams link (only links on those services'
   own domains count, so a look-alike address is never opened). A failed
   fetch keeps the last events and turns ↻ red; hover it for the reason.
+- **Show my next call in the menu bar** (on by default, with a calendar connected): the time
+  until it starts, and what's coming up in its menu (click one to record it). With this on,
+  closing Oatcake's window leaves it running in the menu bar, so reminders and call notices keep
+  working; its menu reopens the window or quits.
 - **Remind me before calls** (on by default): 5 minutes before each timed event, a notification
   with **Open call and start note taking** (or **Start note taking** when there's no call
   link). The button opens the call link, starts recording it (in the folder named like the
