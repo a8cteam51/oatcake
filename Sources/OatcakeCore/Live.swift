@@ -50,17 +50,31 @@ public let callPlaceholders = [
     "Somebody Important", "Guest Star", "To Be Announced", "Whoever That Is", "Unnamed Legend", "A Voice On The Call",
 ]
 
-/// One placeholder per call, picked at random the first time it's asked for.
-public func callPlaceholder(for recording: String) -> String {
+/**
+ * A stand-in for whoever said one line on the call side. Every line gets its own, picked at random
+ * the first time the line is shown and kept for it from then on, and never the one the line before
+ * got, so each turn reads as someone new until the real names arrive. Only the call being recorded
+ * is remembered.
+ */
+public func callPlaceholder(for recording: String, lineAt start: Double) -> String {
     placeholderLock.withLock {
-        if let chosen = chosenPlaceholders[recording] { return chosen }
-        let chosen = callPlaceholders.randomElement()!
-        chosenPlaceholders[recording] = chosen
+        if chosenFor != recording {
+            chosenFor = recording
+            chosenPlaceholders = [:]
+            lastPlaceholder = nil
+        }
+        let line = Int((start * 10).rounded())
+        if let chosen = chosenPlaceholders[line] { return chosen }
+        let chosen = callPlaceholders.filter { $0 != lastPlaceholder }.randomElement()!
+        chosenPlaceholders[line] = chosen
+        lastPlaceholder = chosen
         return chosen
     }
 }
 private let placeholderLock = NSLock()
-nonisolated(unsafe) private var chosenPlaceholders: [String: String] = [:]
+nonisolated(unsafe) private var chosenFor = ""
+nonisolated(unsafe) private var chosenPlaceholders: [Int: String] = [:]
+nonisolated(unsafe) private var lastPlaceholder: String?
 
 /**
  * Transcribes a recording while it's being made, reporting each line as it's finished. Returns once

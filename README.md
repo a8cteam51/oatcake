@@ -82,8 +82,9 @@ folder and ⌘R refreshes the calendar; all of these are in the File and Edit me
 
    Beside your notes, **Transcript** shows the call as it's said, a moment after each pause
    (a second helper, `Oatcake --live`, transcribes the audio as the recorder writes it). Your
-   lines are yours; everyone on the call side shares one obviously made-up name ("Mystery
-   Guest", "Captain Placeholder"…) until the call is over and the voices are told apart.
+   lines are yours; each line from the call side gets an obviously made-up name, a different
+   one every time ("Mystery Guest", "Captain Placeholder"…), until the call is over and the
+   voices are told apart.
    Settings › General turns the live transcript off.
 
    **Calls are noticed.** When a calling app or a browser starts using your microphone and

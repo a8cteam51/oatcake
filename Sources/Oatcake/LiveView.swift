@@ -134,12 +134,11 @@ struct LiveView: View {
 
     // MARK: Live transcript
 
-    /// What's been said so far, a moment after each pause. Your microphone is you; everyone on the
-    /// call side shares one obviously made-up name until the call is over and the voices are told apart.
+    /// What's been said so far, a moment after each pause. Your microphone is you; each line from the
+    /// call side gets an obviously made-up name of its own until the call is over and the voices are told apart.
     private var transcript: some View {
         let lines = liveTranscript(model.liveLines)
         let myName = model.config.myName.isEmpty ? "You" : model.config.myName
-        let other = callPlaceholder(for: rec.id)
         let stopped = model.liveStatus.hasPrefix("The live transcript stopped")
         return ScrollViewReader { proxy in
             ScrollView {
@@ -156,7 +155,7 @@ struct LiveView: View {
                     ForEach(lines) { line in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Text(line.track == .mic ? myName : other).fontWeight(.semibold)
+                                Text(line.track == .mic ? myName : callPlaceholder(for: rec.id, lineAt: line.start)).fontWeight(.semibold)
                                     .foregroundStyle(line.track == .mic ? AnyShapeStyle(person(myName).color) : AnyShapeStyle(.secondary))
                                 Text(clock(line.start)).foregroundStyle(.tertiary).monospacedDigit()
                             }

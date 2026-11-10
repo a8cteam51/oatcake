@@ -481,8 +481,11 @@ private func fixture(_ name: String) throws -> URL {
             LiveTranscriptLine(track: .system, start: 2, end: 4, text: "Morning everyone."),
         ]
         #expect(liveTranscript(lines).map(\.text) == ["Morning everyone.", "I think that's fine, do you agree?", "Yes, sounds good to me."])
-        #expect(callPlaceholders.contains(callPlaceholder(for: "a")))
-        #expect(callPlaceholder(for: "a") == callPlaceholder(for: "a"))
+        // Each line on the call side gets a made-up name of its own: kept for that line, and never the one before it.
+        let names = [4.1, 12.4, 25.0, 33.1, 48.0, 56.2].map { callPlaceholder(for: "a", lineAt: $0) }
+        #expect(names.allSatisfy(callPlaceholders.contains))
+        #expect(zip(names, names.dropFirst()).allSatisfy { $0 != $1 })
+        #expect(callPlaceholder(for: "a", lineAt: 12.4) == names[1])
     }
 }
 
