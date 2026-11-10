@@ -8,6 +8,10 @@ enum SidebarItem: Hashable {
     case live, todos, job(String), folder(String)
 }
 
+/// A section's header runs closer to the sidebar's edge than its rows do. This brings a button at the
+/// end of a header back in line with the counts at the end of the rows.
+private let headerButtonInset: CGFloat = 14
+
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @ViewState private var open: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "openFolders") ?? [])
@@ -40,7 +44,9 @@ struct SidebarView: View {
                     Spacer()
                     Button { newFolderIn = ""; draft = "" } label: { Image(systemName: "folder.badge.plus") }
                         .buttonStyle(.borderless).help("New folder")
+                        .padding(.trailing, 1.5) // This symbol's badge reaches further right than the refresh arrow.
                 }
+                .padding(.trailing, headerButtonInset)
                 .contentShape(Rectangle())
                 .onTapGesture { model.openFolder("") }
                 .help("All meetings")
@@ -196,6 +202,7 @@ struct SidebarView: View {
                 .disabled(model.calendarFetching)
                 .help("\(calendarTip(calendar)). Refresh now.")
             }
+            .padding(.trailing, headerButtonInset)
         }
     }
 
