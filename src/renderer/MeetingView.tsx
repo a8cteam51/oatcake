@@ -172,7 +172,10 @@ export function MeetingView(props: {
   const granolaNotice = [
     "Imported from Granola.",
     !files.notes.trim() && "It didn’t keep your notes.",
-    lines.some((l) => l.speaker === "Call audio" || /^System audio/.test(l.speaker)) && "The names on the call side of its transcript are Granola’s own guesses.",
+    // Read the raw file: parseTranscript turns "System audio (Alex)" into plain "Alex".
+    /^\[[\d:]+\]\s+System audio \(/m.test(files.transcript)
+      ? "The names on the call side of its transcript are Granola’s own guesses."
+      : /^\[[\d:]+\]\s+System audio:/m.test(files.transcript) && "Its transcript only tells your side of the call from everyone else’s.",
     plain.length > 0 && "Its transcript doesn’t say who said what.",
   ]
     .filter(Boolean)

@@ -19,7 +19,7 @@ const REQUIRED = ["document_id", "document_title", "document_created", "summary"
 
 export interface GranolaImport {
   imported: number;
-  /** Already in the Meetings folder. */
+  /** Already in the Meetings folder (the same Granola note). */
   skipped: number;
   /** Rows without an id or a readable date. */
   unreadable: number;
@@ -63,12 +63,16 @@ export function parseCsv(text: string): string[][] {
 
 /** The export's rows as objects, from every CSV in it. */
 async function readExport(file: string): Promise<Record<string, string>[]> {
-  let csvs: string[];
-  let tmp: string | undefined;
-  if (/\.zip$/i.test(file)) {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "oatcake-granola-"));
-    await run("/usr/bin/ditto", ["-x", "-k", file, tmp]);
-    csvs = [];
+  if (/\.csv$/i.test(file)) return readCsvs([file]);
+  if (!/\.zip$/i.test(file)) throw new Error("Pick the .zip (or .csv) that Granola's export gave you.");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "oatcake-granola-"));
+  try {
+    try {
+      await run("/usr/bin/ditto", ["-x", "-k", file, tmp]);
+    } catch {
+      throw new Error("Couldn't open that .zip. Is it the file Granola's export gave you?");
+    }
+    const csvs: string[] = [];
     const walk = (dir: string) => {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         if (e.name.startsWith(".") || e.name === "__MACOSX") continue;
@@ -78,23 +82,23 @@ async function readExport(file: string): Promise<Record<string, string>[]> {
       }
     };
     walk(tmp);
-    csvs.sort();
-  } else if (/\.csv$/i.test(file)) csvs = [file];
-  else throw new Error("Pick the .zip (or .csv) that Granola's export gave you.");
-
-  try {
-    const rows: Record<string, string>[] = [];
-    for (const csv of csvs) {
-      const [header, ...body] = parseCsv(fs.readFileSync(csv, "utf8").replace(/^﻿/, ""));
-      const missing = REQUIRED.filter((c) => !header?.includes(c));
-      if (missing.length) throw new Error(`${path.basename(csv)} doesn't look like a Granola export (no ${missing.join(", ")} column).`);
-      for (const cells of body) rows.push(Object.fromEntries(header.map((h, i) => [h, cells[i] ?? ""])));
-    }
-    if (!rows.length) throw new Error("There are no notes in that export.");
-    return rows;
+    if (!csvs.length) throw new Error("That .zip has no CSV in it. Is it the file Granola's export gave you?");
+    return readCsvs(csvs.sort());
   } finally {
-    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+function readCsvs(csvs: string[]): Record<string, string>[] {
+  const rows: Record<string, string>[] = [];
+  for (const csv of csvs) {
+    const [header, ...body] = parseCsv(fs.readFileSync(csv, "utf8").replace(/^\uFEFF/, ""));
+    const missing = REQUIRED.filter((c) => !header?.includes(c));
+    if (missing.length) throw new Error(`${path.basename(csv)} doesn't look like a Granola export (no ${missing.join(", ")} column).`);
+    for (const cells of body) rows.push(Object.fromEntries(header.map((h, i) => [h, cells[i] ?? ""])));
+  }
+  if (!rows.length) throw new Error("There are no notes in that export.");
+  return rows;
 }
 
 /** Granola note ids of every meeting already in the Meetings folder. */
@@ -119,6 +123,9 @@ function knownNotes(root: string): Set<string> {
   return ids;
 }
 
+/** A series folder's name. No leading dots: those make hidden folders (or "." and ".."). */
+const seriesFolder = (title: string) => safeName(title).replace(/^\.+/, "").trim() || "Untitled";
+
 /** Granola's transcript is one line per utterance, with no times or names: one paragraph each. */
 const transcriptMarkdown = (text: string) =>
   text
@@ -130,8 +137,9 @@ const transcriptMarkdown = (text: string) =>
 export async function importGranola(file: string, root: string): Promise<GranolaImport> {
   const rows = await readExport(file);
   const known = knownNotes(root);
+  const titleOf = (r: Record<string, string>) => r.document_title.trim() || "Untitled";
   const titles = new Map<string, number>();
-  for (const r of rows) titles.set(r.document_title.trim(), (titles.get(r.document_title.trim()) ?? 0) + 1);
+  for (const r of rows) titles.set(titleOf(r), (titles.get(titleOf(r)) ?? 0) + 1);
 
   const result: GranolaImport = { imported: 0, skipped: 0, unreadable: 0, folder: GRANOLA_FOLDER };
   for (const r of rows) {
@@ -145,16 +153,15 @@ export async function importGranola(file: string, root: string): Promise<Granola
       result.skipped++;
       continue;
     }
-    const title = r.document_title.trim() || "Untitled";
+    const title = titleOf(r);
     // Notes that share a title (a recurring meeting) get a folder of their own.
-    const series = (titles.get(title) ?? 0) > 1 ? safeName(title) : "";
+    const series = (titles.get(title) ?? 0) > 1 ? seriesFolder(title) : "";
     const startedAt = started.toISOString();
-    const rel = path.join(GRANOLA_FOLDER, series, meetingFolderName({ title, startedAt }));
+    // Two notes with the same title in the same minute are different notes: number the second.
+    const name = meetingFolderName({ title, startedAt });
+    let rel = path.join(GRANOLA_FOLDER, series, name);
+    for (let n = 2; fs.existsSync(resolveInside(root, rel)); n++) rel = path.join(GRANOLA_FOLDER, series, `${name} (${n})`);
     const dest = resolveInside(root, rel);
-    if (fs.existsSync(dest)) {
-      result.skipped++;
-      continue;
-    }
     // Written beside its final place, then renamed in, so a half-written meeting never shows.
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     const tmp = fs.mkdtempSync(path.join(path.dirname(dest), ".import-"));
