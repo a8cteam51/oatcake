@@ -105,6 +105,7 @@ export function SettingsWindow() {
               Choose…
             </button>
           </Row>
+          <GranolaRow />
         </Group>
 
         <Group
@@ -268,6 +269,38 @@ function TestRow({ missing }: { missing?: string }) {
         }}
       >
         {state.running ? "Testing…" : "Test"}
+      </button>
+    </Row>
+  );
+}
+
+/** Settings › Storage › Import from Granola: the export's notes become meetings in a Granola folder. */
+function GranolaRow() {
+  const [state, setState] = useState<{ running: boolean; text?: string; error?: boolean }>({ running: false });
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const run = async () => {
+    setState({ running: true });
+    try {
+      const r = await api.importGranola();
+      if (!r) return setState({ running: false });
+      const parts = [
+        r.imported ? `Imported ${plural(r.imported, "meeting")} into the ${r.folder} folder.` : "Nothing new to import.",
+        r.skipped ? `${plural(r.skipped, "meeting")} already here.` : "",
+        r.unreadable ? `${plural(r.unreadable, "row")} couldn't be read.` : "",
+      ];
+      setState({ running: false, text: parts.filter(Boolean).join(" ") });
+    } catch (e) {
+      setState({ running: false, error: true, text: (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") });
+    }
+  };
+  return (
+    <Row
+      title="Import from Granola"
+      sub={state.text ?? "Pick the .zip from Granola's export. Each note becomes a meeting; ones already here are skipped."}
+      tone={state.error ? "red" : ""}
+    >
+      <button className="btn" disabled={state.running} onClick={run}>
+        {state.running ? "Importing…" : "Import…"}
       </button>
     </Row>
   );

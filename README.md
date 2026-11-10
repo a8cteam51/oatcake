@@ -111,19 +111,22 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    which stays open as you move between meetings, until New chat. Expect 10–60 seconds
    and some Claude usage per question; the meeting text Claude reads is sent to Anthropic.
 
-## Importing a Granola export
+## Importing from Granola
 
-```sh
-node scripts/import-granola-export.mjs ~/Documents/granola-export --dry-run
-node scripts/import-granola-export.mjs ~/Documents/granola-export
-```
+Export your notes from Granola (it gives you a `.zip` holding a CSV), then in Oatcake open
+Settings › Storage › **Import from Granola…** and pick the `.zip` (or the CSV inside it). Each
+note becomes a meeting folder with `summary.md`, `transcript.md`, `notes.md` (when Granola kept
+your notes) and `meeting.json`, under a **Granola** folder in your Meetings folder. Notes that
+share a title, like a weekly meeting, are grouped in a subfolder named after it; drag folders
+wherever you like afterwards. Each meeting remembers its Granola note, so importing the same
+export again (or a newer one) skips meetings that are already there, wherever you've moved them.
 
-Copies `<series>/<YYYY-MM-DD HHMM>/{summary.md,transcript.md}` into the Meetings folder as
-`<series>/<YYYY-MM-DD HHMM> <title>/` with a `meeting.json`. The export is left as it is,
-and meetings already imported are skipped. Granola has no export in this layout: it was made
-by asking Claude, with the Granola connector, to save each meeting's summary and transcript.
-The script reads the title from `summary.md`'s first `# ` heading and the participants from a
-`- **Participants:** Name (…), Name (…)` line; folder times are read as local time.
+Granola's export has no speaker names or timestamps in its transcripts, so they show as plain
+paragraphs, and it has no participants or end times. The import is in `src/core/granola.ts`.
+
+An older route still works for meetings saved one folder each through Claude and the Granola
+connector (`<series>/<YYYY-MM-DD HHMM>/{summary.md,transcript.md}`):
+`node scripts/import-granola-export.mjs <export folder> [--dry-run]`.
 
 ## Install
 

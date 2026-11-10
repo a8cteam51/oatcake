@@ -268,6 +268,7 @@ main.detail { flex: 1; min-width: 0; display: flex; flex-direction: column; posi
 .transcript-line .who span:first-child { font-weight: 600; }
 .transcript-line .who span:last-child { font-size: 11px; color: var(--fg2); font-variant-numeric: tabular-nums; }
 .transcript-line .said { font-size: 14px; line-height: 1.5; margin-top: 3px; }
+.transcript .said.plain { font-size: 14px; line-height: 1.55; margin: 0; padding: 5px 10px; -webkit-user-select: text; user-select: text; }
 .note-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); padding: 6px 0; align-items: start; }
 .note-row .chip { margin-top: 3px; }
 .note-row > span:last-child, .note-row input { font-size: 15px; line-height: 22px; }

@@ -5,7 +5,7 @@ import { createLlm } from "./llm/index.ts";
 import { ME, type Analysis, type Line } from "./process.ts";
 import { deleteAudio, loadNotes, recordingDir, type Note, type Recording } from "./recordings.ts";
 import { addVoiceprints } from "./speakers.ts";
-import { resolveInside } from "./meetings.ts";
+import { meetingFolderName, resolveInside } from "./meetings.ts";
 
 /** What the user decided for one speaker in review. */
 export type Decision =
@@ -140,14 +140,6 @@ function transcriptMarkdown(paragraphs: Line[]): string {
 /** "- [12:34] point", or "- point" for a prep note written before the call. */
 function notesMarkdown(notes: Note[]): string {
   return notes.map((n) => (n.at === null ? `- ${n.text}` : `- [${clock(n.at)}] ${n.text}`)).join("\n") + "\n";
-}
-
-export function meetingFolderName(meta: { title: string; startedAt: string }): string {
-  const d = new Date(meta.startedAt);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const title = meta.title.replace(/[/:\\]/g, "-").trim() || "Call";
-  return `${stamp} ${title}`;
 }
 
 const TODO_MARKER = "=== TO-DOS ===";
