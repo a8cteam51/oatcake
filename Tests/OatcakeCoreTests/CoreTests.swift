@@ -505,7 +505,9 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
         let a = "11111111-1111-1111-1111-111111111111", b = "22222222-2222-2222-2222-222222222222"
         let audioDir = src.appendingPathComponent("meetings/1767268800000-\(a)")
         try fm.createDirectory(at: audioDir, withIntermediateDirectories: true)
-        try Data("combined".utf8).write(to: audioDir.appendingPathComponent("\(a)-FINAL-combined.m4a"))
+        // A partial take sorts first by name; the finished one is still the one imported.
+        try Data("partial".utf8).write(to: audioDir.appendingPathComponent("\(a)-1767268800.000000-combined.m4a"))
+        try Data("combined".utf8).write(to: audioDir.appendingPathComponent("\(a)-FINAL-1767268800.000000-1767268870.000000-combined.m4a"))
         try Data("mic".utf8).write(to: audioDir.appendingPathComponent("\(a)-FINAL-mic.m4a"))
         let transcript = #"{"blocks":[{"from":1767268801000,"to":1767268802000,"text":"Morning.","source":"system","speaker_id":"S1"},{"from":1767268803000,"to":1767268804000,"text":"Hi Sam.","source":"mic","speaker_id":"S2"},{"from":1767268810000,"to":1767268811000,"text":"Who's that?","source":"system","speaker_id":"S3"}]}"#
         _ = try runCapturing("/usr/bin/sqlite3", [src.appendingPathComponent("quill.db").path, """
@@ -516,6 +518,8 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
             CREATE TABLE Contact (id TEXT, name TEXT);
             INSERT INTO Meeting VALUES ('\(a)', 1767268800000, 1767268870000, '\(transcript.replacingOccurrences(of: "'", with: "''"))', 'Planning', '1767268800000-\(a)', NULL, NULL, NULL, NULL);
             INSERT INTO Meeting VALUES ('\(b)', 1767355200000, NULL, NULL, 'Planning', NULL, NULL, NULL, NULL, NULL);
+            INSERT INTO Meeting VALUES ('33333333-3333-3333-3333-333333333333', 1767441600000, NULL, NULL, 'Deleted', NULL, 1767445200000, NULL, NULL, NULL);
+            INSERT INTO Meeting VALUES ('44444444-4444-4444-4444-444444444444', 1767441600000, NULL, NULL, 'Hidden', NULL, NULL, 1, NULL, NULL);
             INSERT INTO Note VALUES ('n1', '\(a)', 'Minutes', '## Plans &amp; dates' || char(10) || char(10) || '#### 2m' || char(10) || '- Ship it', 1);
             INSERT INTO Contact VALUES ('c1', 'Sam Lee');
             INSERT INTO ContactMeeting VALUES ('c1', 'S1', '\(a)', NULL);
@@ -524,7 +528,9 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
         _ = try runCapturing("/usr/bin/ditto", ["-c", "-k", src.path, zip.path])
 
         let first = try importQuill(zip, into: root, me: "Alex")
+        // The deleted and the hidden meeting are left out altogether: not imported, skipped or unreadable.
         #expect(first.imported == 2 && first.skipped == 0 && first.unreadable == 0)
+        #expect(try fm.contentsOfDirectory(atPath: root.appendingPathComponent("Quill").path) == ["Planning"])
         let series = root.appendingPathComponent("Quill/Planning")
         let folders = try fm.contentsOfDirectory(atPath: series.path).sorted()
         #expect(folders.count == 2)

@@ -71,7 +71,9 @@ func quillTranscript(_ json: String, start: Double, me: String, names: [String: 
         return Line(speaker: speaker, start: max(0, (b.from - start) / 1000), end: max(0, (b.to - start) / 1000), text: text)
     }
     var participants: [String] = []
-    for l in lines where !l.speaker.hasPrefix("Voice ") && !participants.contains(l.speaker) { participants.append(l.speaker) }
+    // Only the "Voice n" labels made up above are left out, not a name Quill matched that happens to look like one.
+    let unnamed = Set(voices.indices.map { "Voice \($0 + 1)" })
+    for l in lines where !unnamed.contains(l.speaker) && !participants.contains(l.speaker) { participants.append(l.speaker) }
     let markdown = mergeRuns(lines).map { "**[\(clock($0.start))] \($0.speaker):** \($0.text)" }.joined(separator: "\n\n") + "\n"
     return (markdown, participants)
 }
@@ -163,8 +165,11 @@ public func importQuill(_ file: URL, into root: URL, me: String, progress: Impor
         if let folder = m.folder, !folder.isEmpty, !folder.contains("/"), !folder.hasPrefix("."),
            // A meeting without a recording is fine (unzip exits non-zero when nothing matches).
            (try? runCapturing("/usr/bin/unzip", ["-qq", "-o", file.path, "meetings/\(folder)/*-combined.m4a", "-d", tmp.path])) != nil,
-           let audio = try? FileManager.default.contentsOfDirectory(at: tmp.appendingPathComponent("meetings/\(folder)"), includingPropertiesForKeys: nil)
-               .first(where: { $0.lastPathComponent.hasSuffix("-combined.m4a") }) {
+           // Quill names the finished recording "<id>-FINAL-<start>-<end>-combined.m4a": that one if there are
+           // several, else the first by name, so the pick doesn't depend on the order the folder lists in.
+           let found = try? FileManager.default.contentsOfDirectory(at: tmp.appendingPathComponent("meetings/\(folder)"), includingPropertiesForKeys: nil)
+               .filter({ $0.lastPathComponent.hasSuffix("-combined.m4a") }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }),
+           let audio = found.first(where: { $0.lastPathComponent.contains("-FINAL-") }) ?? found.first {
             moving["audio.m4a"] = audio
         }
         let series = (titles[title] ?? 0) > 1 ? seriesFolder(title) : ""
