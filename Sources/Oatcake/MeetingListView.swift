@@ -4,11 +4,13 @@ import SwiftUI
 /// The middle column: the selected folder's meetings, newest first (every meeting for the top level).
 struct MeetingListView: View {
     @Environment(AppModel.self) private var model
+    /// Passed in rather than read here: inside the split view, this column doesn't always see the
+    /// model change by itself.
+    let folder: TreeNode?
     @ViewState private var renaming: TreeNode?
     @ViewState private var draft = ""
 
     var body: some View {
-        let folder = model.tree?.find(model.folder) ?? model.tree
         // The top level lists every meeting, each labelled with the folder it's in.
         let everything = folder?.path.isEmpty ?? true
         let rows = listedIn(folder)

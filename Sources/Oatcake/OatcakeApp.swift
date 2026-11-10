@@ -70,7 +70,7 @@ struct ContentView: View {
         } detail: {
             if showsList {
                 HSplitView {
-                    MeetingListView()
+                    MeetingListView(folder: model.tree?.find(model.folder) ?? model.tree)
                         .frame(minWidth: 220, idealWidth: 300, maxWidth: 560)
                     DetailView()
                         .frame(minWidth: 420, maxWidth: .infinity)

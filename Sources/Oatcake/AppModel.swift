@@ -108,7 +108,12 @@ final class AppModel {
 
         resumeRecordings()
         watchMeetings()
-        refresh(openLast: true)
+        // The first load happens before the window shows, so it opens on your last meeting rather
+        // than on whatever the sidebar selects by itself.
+        tree = meetings.tree()
+        todoMeetings = meetings.allTodos()
+        openLastMeeting()
+        refresh()
         // An address set in an earlier session counts as already fetched, so this only fetches if stale.
         calendarUrlFetched = calendarAddress
         refreshCalendar()
@@ -121,7 +126,7 @@ final class AppModel {
 
     // MARK: - Meetings folder
 
-    func refresh(openLast: Bool = false) {
+    func refresh() {
         let meetings = meetings
         Task {
             let (tree, pending, todos) = await Task.detached {
@@ -137,7 +142,6 @@ final class AppModel {
                 analyse(rec.id)
             }
             updateBadge()
-            if openLast { openLastMeeting() }
         }
     }
 
