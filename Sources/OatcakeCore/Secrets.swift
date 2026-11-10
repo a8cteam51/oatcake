@@ -6,13 +6,12 @@ import Foundation
 import Security
 
 public enum SecretName: String, CaseIterable, Sendable {
-    case anthropic, openai, calendar
+    case anthropic, calendar
 
     /// One already in the environment when Oatcake started (e.g. from your shell) is the fallback.
     var environmentVariable: String {
         switch self {
         case .anthropic: "ANTHROPIC_API_KEY"
-        case .openai: "OATCAKE_OPENAI_API_KEY"
         case .calendar: "OATCAKE_CALENDAR_URL"
         }
     }
@@ -73,6 +72,17 @@ public enum Secrets {
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account] as CFDictionary)
     }
 
+    // MARK: - No longer kept
+
+    /// Secrets Oatcake once kept and has no use for now: the key for an OpenAI-compatible service,
+    /// from when the third provider could be any address.
+    static let retired = ["openai"]
+
+    /// Removes them from the Keychain. Done at launch; there's nothing to remove after the first time.
+    public static func forgetRetired() {
+        for account in retired { keychainDelete(account: account) }
+    }
+
     // MARK: - From the Electron version
 
     /// The Electron version kept secrets in secrets.json, encrypted with Chromium's OSCrypt under a
@@ -84,6 +94,11 @@ public enum Secrets {
         guard let password = keychainRead(account: "Oatcake Key", service: "Oatcake Safe Storage") else { return }
         var remaining = stored
         for (key, value) in stored {
+            // One that's no longer kept is dropped rather than moved.
+            if retired.contains(key) {
+                remaining.removeValue(forKey: key)
+                continue
+            }
             guard let name = SecretName(rawValue: key), let data = Data(base64Encoded: value),
                   let plain = decryptOSCrypt(data, password: password) else { continue }
             if keychainRead(account: name.rawValue) == nil {

@@ -2,10 +2,21 @@ import Foundation
 
 public enum Effort: String, Codable, CaseIterable, Sendable { case low, medium, high }
 
+/// Who writes summaries: Claude, or a model on your own Mac or network. Nothing else.
 public enum LlmProvider: String, Codable, CaseIterable, Sendable {
     case claudeCode = "claude-code"
     case anthropic
-    case openaiCompatible = "openai-compatible"
+    /// A model on this Mac or your own network (Ollama, LM Studio…).
+    case local
+
+    /// Settings saved before 0.4 called the third choice "openai-compatible" and let it be any address.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let provider = LlmProvider(rawValue: raw == "openai-compatible" ? "local" : raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown provider \(raw)"))
+        }
+        self = provider
+    }
 }
 
 /**
@@ -36,7 +47,9 @@ public struct LlmConfig: Codable, Equatable, Sendable {
             effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
         }
     }
-    public struct OpenAI: Codable, Equatable, Sendable {
+    /// A model server on this Mac or your own network. `baseUrl` is its chat API's address, e.g.
+    /// http://localhost:11434/v1 for Ollama.
+    public struct Local: Codable, Equatable, Sendable {
         public var baseUrl = ""
         public var model = ""
         public var effort = Effort.medium
@@ -52,17 +65,43 @@ public struct LlmConfig: Codable, Equatable, Sendable {
     public var provider: LlmProvider
     public var claudeCode = ClaudeCode()
     public var anthropic = Anthropic()
-    public var openai = OpenAI()
+    public var local = Local()
 
     public init(provider: LlmProvider) { self.provider = provider }
+
+    /// Settings saved before 0.4 kept the local server's address and model under "openai".
+    private enum OlderKeys: String, CodingKey { case openai }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         provider = (try? c.decodeIfPresent(LlmProvider.self, forKey: .provider)) ?? .claudeCode
         claudeCode = (try? c.decodeIfPresent(ClaudeCode.self, forKey: .claudeCode)) ?? ClaudeCode()
         anthropic = (try? c.decodeIfPresent(Anthropic.self, forKey: .anthropic)) ?? Anthropic()
-        openai = (try? c.decodeIfPresent(OpenAI.self, forKey: .openai)) ?? OpenAI()
+        local = (try? c.decodeIfPresent(Local.self, forKey: .local))
+            ?? (try? decoder.container(keyedBy: OlderKeys.self).decodeIfPresent(Local.self, forKey: .openai))
+            ?? Local()
     }
+}
+
+/**
+ * Whether a model server's address is on this Mac or your own network: localhost, a name with no
+ * dots or ending in .local, or a private or link-local IP address. Oatcake sends transcripts to a
+ * local model only at an address like that, so one can't be pointed at somebody else's service.
+ */
+public func isLocalEndpoint(_ address: String) -> Bool {
+    guard let url = URL(string: address.trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+          let host = url.host(percentEncoded: false)?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")), !host.isEmpty else { return false }
+    if host.contains(":") {
+        // IPv6: this Mac, link-local, or a unique local address.
+        return host == "::1" || host.hasPrefix("fe8") || host.hasPrefix("fe9") || host.hasPrefix("fea") || host.hasPrefix("feb")
+            || host.hasPrefix("fc") || host.hasPrefix("fd")
+    }
+    let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+    if parts.count == 4, let n = Optional(parts.compactMap { UInt8($0) }), n.count == 4 {
+        return n[0] == 127 || n[0] == 10 || (n[0] == 172 && (16...31).contains(n[1])) || (n[0] == 192 && n[1] == 168) || (n[0] == 169 && n[1] == 254)
+    }
+    // A name: this Mac, a machine named on your network, or a Bonjour name.
+    return host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") || !host.contains(".")
 }
 
 public let anthropicModels = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
@@ -234,7 +273,6 @@ public enum ShellEnvironment {
         env["PATH"] = path
         if !keepApiKeys {
             env.removeValue(forKey: "ANTHROPIC_API_KEY")
-            env.removeValue(forKey: "OATCAKE_OPENAI_API_KEY")
         }
         // The calendar's private address is nobody else's business either way.
         env.removeValue(forKey: "OATCAKE_CALENDAR_URL")

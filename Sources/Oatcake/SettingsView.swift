@@ -178,7 +178,7 @@ struct SettingsView: View {
             Picker("Provider", selection: bindLlm(\.provider)) {
                 Text("Claude Code").tag(LlmProvider.claudeCode)
                 Text("Anthropic API").tag(LlmProvider.anthropic)
-                Text("OpenAI-compatible").tag(LlmProvider.openaiCompatible)
+                Text("Local model").tag(LlmProvider.local)
             }
             .pickerStyle(.segmented)
             switch llm.provider {
@@ -199,25 +199,26 @@ struct SettingsView: View {
                     ForEach(Array(Set(anthropicModels + [llm.anthropic.model])).sorted(), id: \.self) { Text($0).tag($0) }
                 }
                 effortPicker(bindLlm(\.anthropic.effort))
-            case .openaiCompatible:
-                TextField(text: bindLlm(\.openai.baseUrl), prompt: Text("e.g. http://localhost:11434/v1")) {
+            case .local:
+                TextField(text: bindLlm(\.local.baseUrl), prompt: Text("e.g. http://localhost:11434/v1")) {
                     Text("Endpoint").font(.body)
-                    if llm.openai.baseUrl.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
+                    if llm.local.baseUrl.trimmed.isEmpty {
+                        Text("Required").font(.callout).foregroundStyle(Color.amber)
+                    } else if !isLocalEndpoint(llm.local.baseUrl) {
+                        Text("Has to be on this Mac or your network").font(.callout).foregroundStyle(Color.amber)
+                    }
                 }
                 .font(.system(.body, design: .monospaced))
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("API key ") + Text("· optional for local servers").font(.caption).foregroundStyle(.secondary)
-                    SecretField(name: .openai, placeholder: "sk-…")
-                }
-                TextField(text: bindLlm(\.openai.model), prompt: Text("e.g. llama3.1:70b")) {
+                TextField(text: bindLlm(\.local.model), prompt: Text("e.g. llama3.1:70b")) {
                     Text("Model").font(.body)
-                    if llm.openai.model.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
+                    if llm.local.model.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
                 }
                 .font(.system(.body, design: .monospaced))
-                effortPicker(bindLlm(\.openai.effort))
+                effortPicker(bindLlm(\.local.effort))
             }
-            TestRow(missing: llm.provider == .openaiCompatible && (llm.openai.baseUrl.trimmed.isEmpty || llm.openai.model.trimmed.isEmpty)
-                ? "Fill in the endpoint and model first." : nil)
+            TestRow(missing: llm.provider != .local ? nil
+                : llm.local.baseUrl.trimmed.isEmpty || llm.local.model.trimmed.isEmpty ? "Fill in the endpoint and model first."
+                : !isLocalEndpoint(llm.local.baseUrl) ? "The endpoint has to be on this Mac or your own network." : nil)
                 .id(llm.provider)
         } header: {
             Text("Summaries and name suggestions")
@@ -236,7 +237,7 @@ struct SettingsView: View {
                 ? Text("Uses the sign-in of Claude Code, Anthropic’s command-line tool, on this Mac. The Claude desktop app’s sign-in is separate and isn’t used. To sign in or switch account, run `claude` in Terminal and type `/login`. No API key needed.")
                 : Text("Claude Code isn’t installed on this Mac. It’s Anthropic’s command-line tool, separate from the Claude desktop app: install it from [claude.com/claude-code](https://claude.com/claude-code), then run `claude` in Terminal once to sign in. Or choose another provider above.")
         case .anthropic: Text("Billed to your Anthropic account. The key is kept in your Keychain.")
-        case .openaiCompatible: Text("Any server that speaks the OpenAI chat API, such as Ollama or LM Studio. Name suggestions need a model that follows instructions well.")
+        case .local: Text("A model running on this Mac or your own network, in Ollama, LM Studio or another server with the same chat API. Nothing is sent anywhere else. Name suggestions need a model that follows instructions well.")
         }
     }
 

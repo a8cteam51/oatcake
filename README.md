@@ -51,8 +51,8 @@ Everything runs on this Mac except the two orange steps. Silero, Parakeet, pyann
 WeSpeaker are small speech models (Parakeet is 0.6B parameters), run on the Neural Engine
 through [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML builds: they turn
 audio into text and voices into fingerprints, take no prompts, and can't write anything else. Claude is
-the only language model, and it only ever sees text (the transcript and your notes),
-never audio.
+the only language model, unless you point Oatcake at one running on your own Mac or network
+instead, and it only ever sees text (the transcript and your notes), never audio.
 
 The window has three columns: the sidebar (a recording in progress, Upcoming from your
 calendar, Needs review, and your folders), the meetings in the selected folder, and the
@@ -232,8 +232,8 @@ any time to reinstall.
    from then on.
 
 Either way, the first recording asks for microphone and system-audio permission for
-"OatcakeRecorder". Summaries use Claude Code by default: install it and sign in, or pick another
-provider in Settings. The first processing run downloads about 500 MB of models to
+"OatcakeRecorder". Summaries use Claude Code by default: install it and sign in, or choose the
+Anthropic API or a local model in Settings. The first processing run downloads about 500 MB of models to
 `~/Library/Application Support/Oatcake/models/FluidAudio` (see Speech models).
 
 ## Updates
@@ -352,8 +352,10 @@ speaker separation on a known meeting.
 0.4.0 is the same app rebuilt in Swift, with the same bundle ID, certificate and update feed, so
 0.3.0 updates to it in place. The first launch:
 
-- moves the API keys and calendar address from `secrets.json` (Electron's encrypted store) into
-  your Keychain, then deletes `secrets.json`;
+- moves the Anthropic API key and calendar address from `secrets.json` (Electron's encrypted
+  store) into your Keychain, then deletes `secrets.json`;
+- drops the key for an OpenAI-compatible service, if you'd saved one, and no longer uses that
+  provider at an address that isn't on your Mac or network (see Settings);
 - deletes the old sherpa-onnx models (about 700 MB) and Electron's `Chromium` cache folder;
 - keeps everything else as it was: `config.json`, the Meetings folder, recordings waiting for
   review, and `calendar.json`.
@@ -369,12 +371,14 @@ afresh.
 Settings in the app (stored in `~/Library/Application Support/Oatcake/config.json`):
 
 - **Summaries and name suggestions:** Claude through Claude Code (`claude -p`, uses your
-  Claude Code sign-in; model and effort), Claude through the Anthropic API, or any
-  OpenAI-compatible endpoint such as a local Ollama. Each provider keeps its own settings.
-  API keys typed in Settings are kept in your login Keychain, not in `config.json`. Settings
-  shows only that a key is saved and its last four characters; it can replace or remove one but
-  never read it back. Claude Code never sees these keys: it always uses its own sign-in. Add a
-  provider in `Sources/OatcakeCore/Llm.swift`.
+  Claude Code sign-in; model and effort), Claude through the Anthropic API, or a local model:
+  one running on your own Mac or network in Ollama, LM Studio or another server with the same
+  chat API (`http://localhost:11434/v1` for Ollama). Nothing else: a local model's address has
+  to be this Mac, a machine on your network or a private IP address, and no key is sent to it.
+  Each provider keeps its own settings. The Anthropic API key typed in Settings is kept in your
+  login Keychain, not in `config.json`. Settings shows only that a key is saved and its last
+  four characters; it can replace or remove one but never read it back. Claude Code never sees
+  that key: it always uses its own sign-in. The providers are in `Sources/OatcakeCore/Llm.swift`.
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
 - **Keep call audio** (Settings › Storage): off by default; audio is deleted once a meeting is saved.
@@ -389,7 +393,7 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   with.
 - **Calendar:** paste your calendar's private iCal address (Google Calendar › Settings › your
   calendar › Integrate calendar › "Secret address in iCal format"). It's kept in the Keychain
-  with the API keys. Oatcake fetches it once an
+  with the Anthropic API key. Oatcake fetches it once an
   hour, or when you press ↻ next to Upcoming, and keeps events from yesterday to two weeks
   ahead in `calendar.json`. Upcoming in the sidebar lists the rest of today and tomorrow
   (events you declined are left out). Clicking one starts a new recording named after it, in

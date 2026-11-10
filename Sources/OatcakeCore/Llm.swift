@@ -1,5 +1,5 @@
-// The model that writes summaries and suggests names: Claude Code, the Anthropic API, or any
-// OpenAI-compatible server. Claude is the only language model Oatcake uses; it only sees text.
+// The model that writes summaries and suggests names: Claude through Claude Code or the Anthropic
+// API, or a model on your own Mac or network. It only ever sees text.
 
 import Foundation
 
@@ -13,7 +13,7 @@ public func makeLlm(_ config: LlmConfig) -> Llm {
     switch config.provider {
     case .claudeCode: ClaudeCodeLlm(model: config.claudeCode.model, effort: config.claudeCode.effort)
     case .anthropic: AnthropicLlm(model: config.anthropic.model, effort: config.anthropic.effort, key: Secrets.get(.anthropic))
-    case .openaiCompatible: OpenAICompatibleLlm(baseUrl: config.openai.baseUrl, model: config.openai.model, effort: config.openai.effort, key: Secrets.get(.openai))
+    case .local: LocalLlm(baseUrl: config.local.baseUrl, model: config.local.model, effort: config.local.effort)
     }
 }
 
@@ -23,6 +23,8 @@ public func makeLlm(_ config: LlmConfig) -> Llm {
  * unchanged.
  */
 public func explainModelError(_ raw: String) -> String {
+    // Already in plain words (and it mentions a network, which isn't a sign of a lost connection here).
+    if raw == notLocalMessage { return raw }
     let e = raw.lowercased()
     if e.contains("unrecognized_model") || e.contains("model_not_found") || (e.contains("model") && (e.contains("not found") || e.contains("does not exist") || e.contains("not exist"))) {
         let model = firstMatch(try! NSRegularExpression(pattern: #""model"\s*:\s*"([^"]+)""#), raw)?[1]
@@ -147,16 +149,17 @@ private func apiErrorMessage(_ body: String) -> String {
     return String(body.prefix(300))
 }
 
-/// Any OpenAI-style chat completions endpoint: OpenAI, OpenRouter, or a local Ollama / LM Studio.
-struct OpenAICompatibleLlm: Llm {
+/// A model server on this Mac or your own network, such as Ollama or LM Studio, through the chat
+/// completions API they share. No key is sent, and an address that isn't local is refused.
+struct LocalLlm: Llm {
     let baseUrl: String
     let model: String
     let effort: Effort
-    let key: String
     var label: String { "\(model) via \(baseUrl)" }
 
     func complete(system: String, prompt: String) async throws -> String {
         guard !baseUrl.trimmed.isEmpty, !model.trimmed.isEmpty else { throw OatcakeError("Set the endpoint and model in Settings first.") }
+        guard isLocalEndpoint(baseUrl) else { throw OatcakeError(notLocalMessage) }
         guard let url = URL(string: baseUrl.trimmed.replacingOccurrences(of: #"/$"#, with: "", options: .regularExpression) + "/chat/completions") else {
             throw OatcakeError("The endpoint isn't a valid address.")
         }
@@ -164,7 +167,6 @@ struct OpenAICompatibleLlm: Llm {
             var request = URLRequest(url: url, timeoutInterval: 600)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "content-type")
-            if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
             var body: [String: Any] = [
                 "model": model,
                 "messages": [["role": "system", "content": system], ["role": "user", "content": prompt]],
@@ -185,6 +187,9 @@ struct OpenAICompatibleLlm: Llm {
         return ((choices?.first?["message"] as? [String: Any])?["content"] as? String) ?? ""
     }
 }
+
+/// What a local model's address gets when it isn't local (settings from a version that allowed any address).
+public let notLocalMessage = "A local model has to be on this Mac or your own network, and this address isn’t. Change it in Settings › Summaries, or choose Claude there."
 
 /// A child process with its input written and its output collected, without blocking a thread.
 public enum ChildProcess {

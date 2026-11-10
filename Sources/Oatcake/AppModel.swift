@@ -148,6 +148,7 @@ final class AppModel {
         // Left by the Electron version: its secrets move into the Keychain, its speech models and
         // Chromium caches go.
         Secrets.migrateFromElectron()
+        Secrets.forgetRetired()
         SpeechModels.removeOldModels()
         try? FileManager.default.removeItem(at: Paths.data.appendingPathComponent("Chromium"))
 

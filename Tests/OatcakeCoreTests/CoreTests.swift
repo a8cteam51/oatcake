@@ -298,7 +298,7 @@ private func fixture(_ name: String) throws -> URL {
         config.myName = "Sam Taylor"
         config.outputDir = root.path
         config.keepAudio = true
-        config.llm = LlmConfig(provider: .openaiCompatible) // no endpoint: the model can't be reached
+        config.llm = LlmConfig(provider: .local) // no endpoint: the model can't be reached
         let rec = Recording(id: "2026-11-10T14-00-00-000Z", dir: recDir, title: "Weekly sync", folder: "", startedAt: Date(), state: .processed)
 
         let saved = try saveMeeting(config, rec, decisions: ["A": .name("Alex Kim")], folder: "")
@@ -332,7 +332,7 @@ private func fixture(_ name: String) throws -> URL {
         var config = Config.defaults()
         config.outputDir = tmp.appendingPathComponent("Meetings").path
         config.keepAudio = true
-        config.llm = LlmConfig(provider: .openaiCompatible) // no endpoint: the model can't be reached
+        config.llm = LlmConfig(provider: .local) // no endpoint: the model can't be reached
         func recording(_ id: String, at startedAt: String, saying text: String) throws -> Recording {
             let dir = tmp.appendingPathComponent(id)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -389,7 +389,7 @@ private func fixture(_ name: String) throws -> URL {
 @Suite struct EnvironmentTests {
     /// Claude Code never gets Oatcake's API keys; the analysis helper does, as a key from your shell is its fallback too.
     @Test func childEnvironments() {
-        let name = "OATCAKE_OPENAI_API_KEY"
+        let name = "ANTHROPIC_API_KEY"
         let before = ProcessInfo.processInfo.environment[name]
         setenv(name, "from-the-shell", 1)
         defer { if let before { setenv(name, before, 1) } else { unsetenv(name) } }
@@ -443,13 +443,41 @@ private func fixture(_ name: String) throws -> URL {
 
     /// A config written by an earlier version has none of the newer settings: they take their defaults.
     @Test func partProviderSettings() throws {
-        // A provider's settings with a key missing keep the keys that are there.
+        // A provider's settings with a key missing keep the keys that are there. Settings from before 0.4,
+        // when the local model was "openai-compatible" under "openai", carry over.
         let json = #"{"provider":"openai-compatible","openai":{"baseUrl":"http://localhost:11434/v1","model":"llama3.1"},"anthropic":{"effort":"high"}}"#
         let llm = try JSONDecoder().decode(LlmConfig.self, from: Data(json.utf8))
-        #expect(llm.provider == .openaiCompatible)
-        #expect(llm.openai.baseUrl == "http://localhost:11434/v1" && llm.openai.model == "llama3.1" && llm.openai.effort == .medium)
+        #expect(llm.provider == .local)
+        #expect(llm.local.baseUrl == "http://localhost:11434/v1" && llm.local.model == "llama3.1" && llm.local.effort == .medium)
         #expect(llm.anthropic.effort == .high && llm.anthropic.model == anthropicModels[0])
         #expect(llm.claudeCode == LlmConfig.ClaudeCode())
+        // Saved again, it's in today's shape, which reads back the same.
+        let saved = try JSONEncoder().encode(llm)
+        let text = String(decoding: saved, as: UTF8.self)
+        #expect(text.contains(#""provider":"local""#) && text.contains(#""local":{"#) && !text.contains("openai"))
+        #expect(try JSONDecoder().decode(LlmConfig.self, from: saved) == llm)
+    }
+
+    @Test func localModelsOnly() async throws {
+        // This Mac, a machine on your network, or a private address.
+        for address in ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8080/v1", "http://mac-studio:11434/v1",
+                        "http://studio.local:11434/v1", "http://192.168.1.20:11434/v1", "http://10.0.0.5/v1", "https://172.20.1.1/v1"] {
+            #expect(isLocalEndpoint(address), "\(address)")
+        }
+        // Anyone else's service, or not an address at all.
+        for address in ["https://api.openai.com/v1", "https://openrouter.ai/api/v1", "http://8.8.8.8/v1", "http://172.32.0.1/v1",
+                        "https://localhost.example.com/v1", "ftp://localhost/v1", "localhost:11434", ""] {
+            #expect(!isLocalEndpoint(address), "\(address)")
+        }
+        // A local model pointed somewhere else is refused before anything is sent.
+        var config = LlmConfig(provider: .local)
+        config.local.baseUrl = "https://api.openai.com/v1"
+        config.local.model = "gpt"
+        await #expect(throws: OatcakeError(notLocalMessage)) { _ = try await makeLlm(config).complete(system: "", prompt: "Hello") }
+        // That refusal is shown as it is, not taken for a lost connection.
+        #expect(explainModelError(notLocalMessage) == notLocalMessage)
+        // No key is kept for it any more.
+        #expect(SecretName.allCases.map(\.rawValue) == ["anthropic", "calendar"])
     }
 
     @Test func olderConfig() throws {
