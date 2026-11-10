@@ -43,7 +43,19 @@ public enum SpeechModels {
             || !FileManager.default.exists(diarizerDirectory)
     }
 
+    /**
+     * The model files come from these exact Hugging Face commits, so a change to a model repo can't
+     * change what Oatcake runs. FluidAudio pins the diarisation models itself. Moving to a newer
+     * model means updating a commit here (and checking the results), like updating a dependency.
+     */
+    static let pinnedRevisions = [
+        "FluidInference/parakeet-tdt-0.6b-v2-coreml": "ee09c569f73759e6d44c9bd16766f477b2b36d39",
+        "FluidInference/parakeet-ultra-coreml": "95eaa59a39d4394f047a4dc5cce480388a60d1b6",
+        "FluidInference/silero-vad-coreml": "b419383c55c110e2c9271fa6ee0ea83d03c70d96",
+    ]
+
     static func loadTranscriber(_ key: String) async throws -> Transcriber {
+        ModelRegistry.revisionOverrides = pinnedRevisions
         let version = asrChoice(key).version
         let vad = try await VadManager(config: .default, modelDirectory: root)
         let models = try await AsrModels.downloadAndLoad(to: asrDirectory(version), version: version)

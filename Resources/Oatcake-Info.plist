@@ -28,6 +28,11 @@
 	<string>NSApplication</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>GPL-3.0-or-later</string>
+	<!-- The recorder asks for these as its own app, but macOS also checks the app that launched it. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Oatcake records your microphone so your side of the call is in the transcript.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Oatcake records call audio so the other people on the call are in the transcript.</string>
 	<!-- Call reminders stay on screen with their button until dealt with, like Calendar's alerts. -->
 	<key>NSUserNotificationAlertStyle</key>
 	<string>alert</string>

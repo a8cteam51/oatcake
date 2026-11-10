@@ -2,7 +2,7 @@ name: Release
 
 # Pushing a version tag builds Oatcake.app, signs it with the release certificate, and publishes it
 # with latest.json, the signed manifest that install.sh and Oatcake's own updater read:
-#   npm version patch && git push --follow-tags
+#   Scripts/version.sh patch && git push --follow-tags
 # Running the workflow by hand (Actions › Release › Run workflow) builds and signs without releasing.
 #
 # Secrets (README › Releasing):
@@ -27,16 +27,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 0 # the previous tag, for the release notes
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-
-      - name: Check the tag matches package.json
+      - name: Check the tag matches VERSION
         if: github.ref_type == 'tag'
         run: |
-          version="v$(node -p 'require("./package.json").version')"
+          version="v$(tr -d '[:space:]' < VERSION)"
           if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json's version ($version). Use npm version to make the tag."
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match VERSION ($version). Use Scripts/version.sh to make the tag."
             exit 1
           fi
 
@@ -68,26 +64,20 @@ jobs:
           codesign --force --sign "Oatcake Release" --keychain "$keychain" "$RUNNER_TEMP/sign-test"
           echo "OATCAKE_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
-      # No package install scripts run, apart from Electron's own download.
-      - name: Install
-        run: |
-          npm ci --ignore-scripts
-          node node_modules/electron/install.js
+      - run: swift test
 
-      - run: npm run typecheck
-
-      # Builds the Swift recorder, bundles the app, sets Electron's fuses and signs it (scripts/package.mjs).
+      # Builds the app and the recorder, bundles them and signs both (Scripts/bundle.sh).
       - name: Package
         env:
           OATCAKE_SIGN_IDENTITY: Oatcake Release
           OATCAKE_REQUIRE_SIGNING: "1"
-        run: npm run package
+        run: Scripts/bundle.sh
 
       # Both the app and the recorder must name the certificate, not an ad-hoc hash, or installed
       # copies couldn't update to this one and macOS would ask for permissions again.
       - name: Check the signatures
         run: |
-          app=out/Oatcake-darwin-arm64/Oatcake.app
+          app=build/Oatcake.app
           codesign --verify --deep --strict "$app"
           for bundle in "$app" "$app/Contents/Resources/OatcakeRecorder.app"; do
             requirement="$(codesign -d -r - "$bundle" 2>/dev/null)"
@@ -98,23 +88,23 @@ jobs:
             esac
           done
 
-      # ditto keeps the symlinks inside Electron's frameworks, which zip would break.
+      # ditto keeps the code signatures intact.
       - name: Zip
         run: |
           zip="Oatcake-${GITHUB_REF_NAME//\//-}-arm64.zip" # a branch name's / can't be in a file name
-          ditto -c -k --sequesterRsrc --keepParent out/Oatcake-darwin-arm64/Oatcake.app "$zip"
+          ditto -c -k --sequesterRsrc --keepParent build/Oatcake.app "$zip"
           echo "ZIP=$zip" >> "$GITHUB_ENV"
           ls -lh "$zip"
 
-      # Notes: the commit subjects since the previous tag, without npm version's own commit.
+      # Notes: the commit subjects since the previous tag, without Scripts/version.sh's own commit.
       - name: Sign latest.json
         env:
           OATCAKE_UPDATE_KEY: ${{ secrets.OATCAKE_UPDATE_KEY }}
         run: |
           previous="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
           git log --no-merges --format='- %s' ${previous:+"$previous..HEAD"} | grep -v -E '^- v?[0-9]+\.[0-9]+\.[0-9]+$' > "$RUNNER_TEMP/notes.txt" || true
-          node scripts/sign-manifest.mjs \
-            --app out/Oatcake-darwin-arm64/Oatcake.app \
+          swift Scripts/sign-manifest.swift \
+            --app build/Oatcake.app \
             --zip "$ZIP" \
             --url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ZIP" \
             --notes "$RUNNER_TEMP/notes.txt" > latest.json
@@ -125,7 +115,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NOTES: |
-            For Apple Silicon Macs on macOS 14.2 or later. To install, paste this into Terminal:
+            For Apple Silicon Macs on macOS 15 or later. To install, paste this into Terminal:
 
             ```
             curl -fsSL https://raw.githubusercontent.com/a8cteam51/oatcake/trunk/install.sh | sh

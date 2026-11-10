@@ -14,9 +14,9 @@ flowchart TD
         notes["Your notes<br/>notes.json"]
     end
 
-    subgraph process["2 · Process: speech models on this Mac (sherpa-onnx)"]
+    subgraph process["2 · Process: speech models on this Mac's Neural Engine (FluidAudio)"]
         asr["Silero VAD finds speech,<br/>Parakeet turns it into text"]
-        voices["pyannote finds speaker turns,<br/>CAM++ fingerprints each voice<br/>→ speakers A, B, C…"]
+        voices["pyannote finds speaker turns,<br/>WeSpeaker fingerprints each voice<br/>→ speakers A, B, C…"]
         combine["Who said what<br/>call-audio text split by speaker turns;<br/>mic lines that echo the call dropped"]
         match["Voiceprint match against<br/>people you've confirmed before"]
         prints[("voiceprints.json")]
@@ -48,8 +48,9 @@ flowchart TD
 ```
 
 Everything runs on this Mac except the two orange steps. Silero, Parakeet, pyannote and
-CAM++ are small speech models (Parakeet is 0.6B parameters): they turn audio into text
-and voices into fingerprints, take no prompts, and can't write anything else. Claude is
+WeSpeaker are small speech models (Parakeet is 0.6B parameters), run on the Neural Engine
+through [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML builds: they turn
+audio into text and voices into fingerprints, take no prompts, and can't write anything else. Claude is
 the only language model, and it only ever sees text (the transcript and your notes),
 never audio.
 
@@ -65,7 +66,7 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    everything the Mac plays (Zoom, Meet, Slack, anything) is recorded as the other people.
    During the call, write one point per line: each is stamped with the time you started
    typing it, and every line stays editable. The recorder is a small helper app
-   (`recorder/`), so macOS asks for microphone and system-audio permission for
+   (`Sources/OatcakeRecorder`), so macOS asks for microphone and system-audio permission for
    "OatcakeRecorder" once; if it hasn't started after a few seconds, the live screen says
    to look for that prompt. Pick the microphone on the record screen, from the mic button
    during the call, or in Settings: "Same as Mac" follows System Settings › Sound; a chosen
@@ -74,8 +75,9 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    lined up with the call. You're warned after 30 seconds of a silent mic or no call audio.
    Stop asks first.
 2. **Process (on this Mac, in the background).** Parakeet transcribes both tracks. The call
-   audio is split into voices by sherpa-onnx (pyannote segmentation + CAM++ fingerprints,
-   merged by voice similarity). Mic lines that repeat the call audio (speaker echo) are
+   audio is split into voices by FluidAudio's batch diariser (pyannote segmentation, WeSpeaker
+   fingerprints, VBx clustering). It runs as a helper process (`Oatcake --analyse`), so a
+   problem there can't take the window or a recording in progress with it. Mic lines that repeat the call audio (speaker echo) are
    dropped. Known voices are recognised from saved voiceprints; other names are suggested
    from the conversation by the summary model, quoting the words that gave it away. The
    recording waits under Needs review with its step (1–5); a failure shows the reason, with
@@ -122,15 +124,13 @@ wherever you like afterwards. Each meeting remembers its Granola note, so import
 export again (or a newer one) skips meetings that are already there, wherever you've moved them.
 
 Granola's export has no speaker names or timestamps in its transcripts, so they show as plain
-paragraphs, and it has no participants or end times. The import is in `src/core/granola.ts`.
-
-An older route still works for meetings saved one folder each through Claude and the Granola
-connector (`<series>/<YYYY-MM-DD HHMM>/{summary.md,transcript.md}`):
-`node scripts/import-granola-export.mjs <export folder> [--dry-run]`.
+paragraphs, and it has no participants or end times. The import is in
+`Sources/OatcakeCore/Granola.swift`.
 
 ## Install
 
-Needs an Apple Silicon Mac on macOS 14.2 or later (the recorder uses Core Audio process taps).
+Needs an Apple Silicon Mac on macOS 15 or later (FluidAudio's diariser hits a Core ML bug that
+Apple fixed in macOS 15).
 Paste this into Terminal:
 
 ```sh
@@ -143,8 +143,8 @@ any time to reinstall. Oatcake isn't notarised: a zip downloaded with a browser 
 quarantine flag and is blocked, while files curl downloads aren't, which is why the install is a
 Terminal line. The first recording asks for microphone and system-audio permission for
 "OatcakeRecorder". Summaries use Claude Code by default: install it and sign in, or pick another
-provider in Settings. The first processing run downloads ~700 MB of models to
-`~/Library/Application Support/Oatcake/models`.
+provider in Settings. The first processing run downloads about 500 MB of models to
+`~/Library/Application Support/Oatcake/models/FluidAudio` (see Speech models).
 
 ## Updates
 
@@ -156,12 +156,13 @@ click.
 
 Each release carries `latest.json`, a manifest naming the version and its zip (address,
 SHA-256, size), signed with Oatcake's Ed25519 release key. Oatcake checks that signature
-against the public keys it ships (`src/core/update-keys.ts`), checks the zip's size and
+against the public keys it ships (`Update.publicKeys`), checks the zip's size and
 checksum, unpacks it with `ditto`, checks it's Oatcake at that version, and checks the new app
 is signed with the same certificate as the running one (`codesign --verify --deep --strict -R`
 with the running app's designated requirement). The new copy is staged next to the installed
 one; a small detached script waits for Oatcake to quit, swaps the two, and opens it. Its log is
-`~/Library/Application Support/Oatcake/update.log`. The mechanics are in `src/core/update.ts`.
+`~/Library/Application Support/Oatcake/update.log`. The mechanics are in
+`Sources/OatcakeCore/Update.swift`.
 
 A copy that can't replace itself says why in Settings and offers the install line instead: a
 development copy, one built without the release certificate, one in a folder you can't write
@@ -169,39 +170,49 @@ to, or one macOS is running from a quarantined download.
 
 ## Build from source
 
-Needs Node 22 or later and Xcode's command line tools (`xcode-select --install`) to build the
-recorder.
+Needs Xcode's command line tools (`xcode-select --install`, Swift 6.2 or later); Xcode itself
+isn't needed.
 
 ```sh
-npm install
-node node_modules/electron/install.js   # if installed with --ignore-scripts
-npm run build:recorder                  # builds recorder/build/OatcakeRecorder.app
-npm start                               # development
-npm run package                         # out/Oatcake-darwin-arm64/Oatcake.app
+swift build                  # debug build of everything
+swift test                   # the core's tests
+Scripts/bundle.sh            # build/Oatcake.app, release build, recorder inside
+Scripts/bundle.sh debug      # the same, debug build
 ```
 
-The packaged app isn't notarised. It's signed with the "Oatcake Release" certificate when that's
-in your keychain, and ad-hoc otherwise. macOS ties the recorder's microphone and system-audio
-permission, and Oatcake's Keychain access, to the signature: an ad-hoc build is a new app to macOS
-every time (so it asks again), and only a release-signed copy can update itself. The Dock badge
-counts recordings waiting under Needs review. The icon is `assets/icon.svg`;
-`assets/Oatcake.icns` is built from `assets/icon.png` with `iconutil`.
+`Scripts/bundle.sh` signs with the "Oatcake Release" certificate when that's in your keychain,
+and ad-hoc otherwise. macOS ties the recorder's microphone and system-audio permission, and
+Oatcake's Keychain items, to the signature: an ad-hoc build is a new app to macOS every time
+(so it asks again), and only a release-signed copy can update itself. The Dock badge counts
+recordings waiting under Needs review. The icon is `assets/icon.svg`; `assets/Oatcake.icns` is
+built from `assets/icon.png` with `iconutil`.
+
+To try a build without touching your own recordings, settings and voiceprints, point it at
+another data folder (and set a different Meetings folder in its Settings):
+
+```sh
+open -n --env OATCAKE_DATA_DIR=/tmp/oatcake-test build/Oatcake.app
+```
+
+With only the command line tools, SwiftUI's `@State` macro isn't available (its plugin ships with
+Xcode), so views use the `State` property wrapper through the `ViewState` alias.
 
 ## Releasing
 
 Bump the version and push its tag:
 
 ```sh
-npm version patch            # or minor; commits package.json and tags v0.2.1
+Scripts/version.sh patch     # or minor; commits VERSION and tags v0.4.1
 git push --follow-tags
 ```
 
-The Release workflow (`.github/workflows/release.yml`) builds the app on a GitHub Mac runner,
-signs it and the recorder with the release certificate (and stops if either ends up with any
-other signature), zips it, writes and signs `latest.json` with the commit subjects since the
-previous tag as notes, attaches both to a new GitHub release, and checks the public feed serves
-that `latest.json`. It stops if the tag doesn't match `package.json`'s version. Running it by
-hand from the Actions tab builds and signs without releasing.
+The Release workflow (`.github/workflows/release.yml`) runs the tests, builds the app on a
+GitHub Mac runner, signs it and the recorder with the release certificate (and stops if either
+ends up with any other signature), zips it, writes and signs `latest.json`
+(`Scripts/sign-manifest.swift`) with the commit subjects since the previous tag as notes,
+attaches both to a new GitHub release, and checks the public feed serves that `latest.json`. It
+stops if the tag doesn't match `VERSION`. Running it by hand from the Actions tab builds and
+signs without releasing.
 
 It needs three repository secrets:
 
@@ -211,18 +222,51 @@ It needs three repository secrets:
   carries the same one, so permissions survive updates and installed copies accept the next
   release.
 - `OATCAKE_UPDATE_KEY`: the Ed25519 private key that signs `latest.json` (base64 PKCS#8 DER).
-  `node scripts/sign-manifest.mjs keygen` makes a new pair.
+  `swift Scripts/sign-manifest.swift keygen` makes a new pair.
 
 Keep copies of the certificate and the update key somewhere safe outside GitHub (secrets can't be
 read back). If the certificate is lost, installed copies won't accept releases signed with a new
 one and need the install line once. To replace the update key, add the new public key to
-`src/core/update-keys.ts`, release, and only then sign with the new key.
+`Update.publicKeys`, release, and only then sign with the new key.
 
 To build release-signed copies locally (so a rebuilt recorder keeps its permissions), import the
-`.p12` into your login keychain; `npm run package` and `npm run build:recorder` then use it.
-To try an update before publishing it, serve a folder holding a zip and its `latest.json` and
-start Oatcake with `OATCAKE_UPDATE_FEED=http://127.0.0.1:8000/latest.json`; `install.sh` takes
-`OATCAKE_FEED` the same way. With either, the zip is fetched from beside the manifest.
+`.p12` into your login keychain; `Scripts/bundle.sh` then uses it. To try an update before
+publishing it, serve a folder holding a zip and its `latest.json` and start Oatcake with
+`OATCAKE_UPDATE_FEED=http://127.0.0.1:8000/latest.json`; `install.sh` takes `OATCAKE_FEED` the
+same way. With either, the zip is fetched from beside the manifest.
+
+## Speech models
+
+FluidAudio is pinned to an exact version in `Package.swift`, with only its diarisation trait
+(no text-to-speech, no prebuilt text-normalisation library). The models come from
+FluidInference's Hugging Face repositories at fixed commits (`SpeechModels.pinnedRevisions`;
+FluidAudio pins the diarisation models itself), so a change to a repository can't change what
+Oatcake runs. Updating either is a deliberate change: bump it, then check transcripts and
+speaker separation on a known meeting.
+
+| Model | Used for | Licence |
+| --- | --- | --- |
+| Silero VAD | finding speech | MIT |
+| Parakeet TDT 0.6B v2 | English transcription (default) | CC-BY-4.0 |
+| Parakeet Ultra (post-trained v3) | 25 European languages | CC-BY-4.0 |
+| pyannote community-1 segmentation and embedding | speaker turns and voice fingerprints | CC-BY-4.0 |
+
+## Moving from the Electron version (0.3 and earlier)
+
+0.4.0 is the same app rebuilt in Swift, with the same bundle ID, certificate and update feed, so
+0.3.0 updates to it in place. The first launch:
+
+- moves the API keys and calendar address from `secrets.json` (Electron's encrypted store) into
+  your Keychain, then deletes `secrets.json`;
+- deletes the old sherpa-onnx models (about 700 MB) and Electron's `Chromium` cache folder;
+- keeps everything else as it was: `config.json`, the Meetings folder, recordings waiting for
+  review, and `calendar.json`.
+
+Voice fingerprints come from a different model now, so `voiceprints.json` keeps the names it
+knows (they're still offered in review) but not their old fingerprints: each person is
+recognised again after one saved call. A recording analysed by the old version but not yet
+saved can still be reviewed and saved; its fingerprints aren't kept. Avatar colours start
+afresh.
 
 ## Settings
 
@@ -231,17 +275,16 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
 - **Summaries and name suggestions:** Claude through Claude Code (`claude -p`, uses your
   Claude Code sign-in; model and effort), Claude through the Anthropic API, or any
   OpenAI-compatible endpoint such as a local Ollama. Each provider keeps its own settings.
-  API keys typed in Settings are stored encrypted (Electron safeStorage, whose key lives in
-  your Keychain) in `secrets.json`, not in `config.json`. Settings shows only that a key is
-  saved and its last four characters; it can replace or remove one but never read it back.
-  Claude Code never sees these keys: it always uses its own sign-in. Add a provider in
-  `src/core/llm/`.
-- **Transcription model:** any model in `ASR_MODELS` (`src/core/models.ts`); sherpa-onnx
-  also runs Whisper, Canary and Cohere Transcribe.
+  API keys typed in Settings are kept in your login Keychain, not in `config.json`. Settings
+  shows only that a key is saved and its last four characters; it can replace or remove one but
+  never read it back. Claude Code never sees these keys: it always uses its own sign-in. Add a
+  provider in `Sources/OatcakeCore/Llm.swift`.
+- **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
+  (`SpeechModels.asr`); FluidAudio runs other models too.
 - **Keep call audio:** off by default; audio is deleted once a meeting is saved.
 - **Calendar:** paste your calendar's private iCal address (Google Calendar › Settings › your
-  calendar › Integrate calendar › "Secret address in iCal format"). It's stored encrypted with
-  the API keys (an address from an older `config.json` is moved there). Oatcake fetches it once an
+  calendar › Integrate calendar › "Secret address in iCal format"). It's kept in the Keychain
+  with the API keys. Oatcake fetches it once an
   hour, or when you press ↻ next to Upcoming, and keeps events from yesterday to two weeks
   ahead in `calendar.json`. Upcoming in the sidebar lists the rest of today and tomorrow
   (events you declined are left out). Clicking one starts a new recording named after it, in
@@ -260,45 +303,44 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
 
 ## Security
 
-- The window can only ask the main process for things through the preload bridge, and only
-  from Oatcake's own pages; every path it sends is checked to stay inside the Meetings folder
-  or the recordings folder. The Meetings folder itself is only changed through the folder
-  picker. The window gets no camera, microphone or other web permissions: the recorder app
-  captures audio on its own.
-- Summaries and answers are rendered with any HTML shown as text, under a content security
-  policy that allows only the app's own scripts and no remote images.
-- Downloaded speech models are checked against pinned SHA-256 checksums before use.
+- Every path the window acts on is checked to stay inside the Meetings folder or the recordings
+  folder. The Meetings folder itself is only changed through the folder picker. The app itself
+  never records: the recorder app captures audio on its own.
+- Summaries and answers are drawn as Markdown with any HTML shown as text. Links in Ask's answers
+  to anything but a meeting are shown as text, not made clickable.
+- Speech models are fetched from pinned commits (see Speech models).
 - Updates are installed only from a `latest.json` signed with Oatcake's release key, only if the
   zip matches its checksum, and only if the new app carries the running app's code-signing
   identity (see Updates).
-- The packaged app has Electron's fuses set: it can't be run as plain Node
-  (`ELECTRON_RUN_AS_NODE`), ignores `NODE_OPTIONS` and `--inspect`, and loads its code only
-  from its own asar, whose checksum is verified.
 - Files Oatcake rewrites (meeting Markdown, config, voiceprints, calendar) are written to a
   new temporary file and renamed into place, never through an existing file or link.
 - Known gap: `OatcakeRecorder.app` holds the microphone and system-audio permissions, and any
   program running as you can launch it (`open … --args --out <dir>`) to record. Closing that
   needs the recorder to check who launched it.
-- Recording one call at a time is enforced by the main process. If Oatcake quits or crashes
-  mid-call, the next launch picks the recording up again (still running) or finishes it from
-  the audio on disk (recorder gone), so nothing is left recording unseen or stuck.
+- Recording one call at a time is enforced by the app. If Oatcake quits or crashes mid-call,
+  the next launch picks the recording up again (still running) or finishes it from the audio on
+  disk (recorder gone), so nothing is left recording unseen or stuck.
 
 ## Accuracy
 
-Speaker separation was tuned against a real four-person meeting with known speakers
-(AMI ES2002a, two 5-minute excerpts): 82–85% of speech went to the right voice, all four
-people were found, and voiceprints from one excerpt recognised people in the other
-3 times out of 5 with no wrong matches (it asked in the other 2). Expect to merge a split
-voice now and then, and to mark a voice "mixed" when two people sound alike.
+On two AMI meetings with four known speakers (ES2004a and IS1009a, 14–17 minutes each),
+FluidAudio found all four people both times and gave 76–78% of speech to the right voice; the
+Electron version's sherpa-onnx pipeline found five at 59% on the same audio and scoring.
+Voiceprints from one meeting scored 0.85–0.95 against the same person in another (ES2004c) and
+at most 0.34 against anyone else; a match needs 0.6 and a lead of 0.1 over the next person.
+Expect to merge a split voice now and then, and to mark a voice "mixed" when two people sound
+alike.
 
 ## Layout
 
-- `recorder/` — Swift system-audio + mic recorder (helper app)
-- `src/core/` — recording, transcription, speakers, voiceprints, summaries, meeting folders
-- `src/main/` — Electron main process, preload bridge, analysis worker
-- `src/renderer/` — the window (React)
+- `Sources/OatcakeRecorder/` — system-audio + mic recorder (helper app)
+- `Sources/OatcakeCore/` — recordings, speech pipeline, voiceprints, summaries, meeting folders,
+  calendar, Granola import, Ask, updates
+- `Sources/Oatcake/` — the app (SwiftUI); `--analyse` runs the analysis helper
+- `Tests/OatcakeCoreTests/` — tests, including the calendar against ical.js's output
+- `Scripts/` — bundling, versioning, signing `latest.json`
 
 ## License
 
-GPL-3.0-or-later (`LICENSE`). The recorder's audio tap and some speaker-matching values are
-adapted from OpenWhispr, under its MIT license (`THIRD_PARTY_NOTICES.md`).
+GPL-3.0-or-later (`LICENSE`). The recorder's audio tap and the echo check are adapted from
+OpenWhispr, under its MIT license; FluidAudio is Apache-2.0 (`THIRD_PARTY_NOTICES.md`).

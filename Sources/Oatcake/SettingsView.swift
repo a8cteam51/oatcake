@@ -201,6 +201,7 @@ func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
 private extension Text {
     func settingsHint(_ color: Color = .secondary) -> some View {
         font(.caption).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -304,6 +305,8 @@ private struct SecretField: View {
             }
             .textFieldStyle(.roundedBorder)
             .font(.system(.body, design: .monospaced))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity)
             .focused($focused)
             .help(described.saved ? "Paste a new one to replace it" : "")
             .onSubmit { save(done: true) }

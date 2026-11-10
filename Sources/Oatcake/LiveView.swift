@@ -65,7 +65,7 @@ struct LiveView: View {
                 Button("Cancel") { model.cancelRecording(hasNotes: lines.contains { !$0.text.trimmed.isEmpty }) }
                     .help("Cancel this recording")
             } else {
-                Button { model.confirmStop() } label: { Label("Stop", systemImage: "stop.fill") }
+                Button { model.confirmStop() } label: { Label("Stop", systemImage: "stop.fill").labelStyle(.titleAndIcon) }
                     .tint(.red)
                     .buttonStyle(.borderedProminent)
                     .help("Stop recording")

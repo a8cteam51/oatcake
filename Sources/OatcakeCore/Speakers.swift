@@ -19,7 +19,14 @@ private let minSpeakerSeconds = 5.0
  * the Electron version's sherpa-onnx pipeline with its own merge step found one too many at 59%.
  */
 func diarize(_ samples: [Float], diarizer: OfflineDiarizerManager) async throws -> (turns: [Turn], prints: [String: [Float]]) {
-    let result = try await diarizer.process(audio: samples)
+    let result: DiarizationResult
+    do {
+        result = try await diarizer.process(audio: samples)
+    } catch OfflineDiarizationError.noSpeechDetected {
+        // The transcriber heard something the voice model doesn't count as speech (a quiet call,
+        // background noise): the call audio is one voice, as when nobody else spoke.
+        return ([], [:])
+    }
     var turns = result.segments.map { Turn(start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds), speaker: $0.speakerId) }
     var prints = (result.speakerDatabase ?? [:]).mapValues(normalise)
 
