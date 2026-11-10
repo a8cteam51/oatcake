@@ -84,11 +84,15 @@ func attendeeName(_ a: CalendarEvent.Attendee) -> String {
         .split(whereSeparator: { "._-".contains($0) }).map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
 }
 
-/// Everyone invited to an event except you.
+/// The other people coming to an event: not you, not anyone who declined, not rooms, and each name once.
 func otherAttendees(_ event: CalendarEvent, myName: String) -> [CalendarEvent.Attendee] {
     let me = myName.lowercased()
     let first = me.split(separator: " ").first.map(String.init) ?? me
-    return event.attendees.filter { let n = attendeeName($0).lowercased(); return n != me && n != first }
+    var seen = Set<String>()
+    return event.attendees.filter {
+        let n = attendeeName($0).lowercased()
+        return $0.declined != true && $0.resource != true && n != me && n != first && seen.insert(n).inserted
+    }
 }
 
 /// Labels that aren't a person: their avatars are grey.

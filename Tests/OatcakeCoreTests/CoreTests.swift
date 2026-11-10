@@ -22,6 +22,30 @@ private func fixture(_ name: String) throws -> URL {
         #expect(allDay.endDate.timeIntervalSince(allDay.startDate) == 86_400)
     }
 
+    /// Who's on an invite keeps how they answered and whether they're a room, so neither is offered as a name.
+    @Test func attendees() throws {
+        let ics = """
+        BEGIN:VCALENDAR
+        BEGIN:VEVENT
+        UID:1
+        SUMMARY:Planning
+        DTSTART:20261110T100000Z
+        DTEND:20261110T103000Z
+        ATTENDEE;CN=Alex Kim;PARTSTAT=ACCEPTED:mailto:alex@example.com
+        ATTENDEE;CN=Jo Park;PARTSTAT=DECLINED:mailto:jo@example.com
+        ATTENDEE;CUTYPE=RESOURCE;CN=London-6-Boardroom (10):mailto:room@resource.calendar.example.com
+        END:VEVENT
+        END:VCALENDAR
+        """
+        let event = try #require(parseCalendar(ics, from: parseISO("2026-11-10T00:00:00Z")!, to: parseISO("2026-11-11T00:00:00Z")!).first)
+        #expect(event.attendees.map(\.email) == ["alex@example.com", "jo@example.com", "room@resource.calendar.example.com"])
+        #expect(event.attendees.map(\.declined) == [nil, true, nil])
+        #expect(event.attendees.map(\.resource) == [nil, nil, true])
+        // A cache written before these were kept still reads.
+        let old = try JSONDecoder().decode(CalendarEvent.Attendee.self, from: Data(#"{"name":"Alex Kim","email":"alex@example.com"}"#.utf8))
+        #expect(old == event.attendees[0] && old.declined == nil)
+    }
+
     @Test func callLinks() {
         #expect(callApp("https://meet.google.com/abc") == "Google Meet")
         #expect(callApp("https://acme.zoom.us/j/1") == "Zoom")

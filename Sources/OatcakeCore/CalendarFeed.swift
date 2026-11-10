@@ -8,6 +8,17 @@ public struct CalendarEvent: Codable, Identifiable, Equatable, Hashable, Sendabl
     public struct Attendee: Codable, Equatable, Hashable, Sendable {
         public var name: String?
         public var email: String
+        /// They declined the invite. nil when they didn't (and in caches written before this was kept).
+        public var declined: Bool?
+        /// A room or other resource on the invite, not a person.
+        public var resource: Bool?
+
+        // Who they are, not how they answered.
+        public static func == (a: Attendee, b: Attendee) -> Bool { a.name == b.name && a.email == b.email }
+        public func hash(into hasher: inout Hasher) {
+            hasher.combine(name)
+            hasher.combine(email)
+        }
     }
     /// Unique per occurrence.
     public var id: String
@@ -298,10 +309,10 @@ public func parseCalendar(_ text: String, from: Date, to: Date) -> [CalendarEven
         guard end > from, start < to else { return }
         let c = event.component
         if (c.first("STATUS")?.value ?? "").uppercased() == "CANCELLED" { return }
-        let attendees = c.all("ATTENDEE").map { p -> (email: String, name: String?, declined: Bool) in
+        let attendees = c.all("ATTENDEE").map { p -> (email: String, name: String?, declined: Bool, resource: Bool) in
             let email = p.value.replacingOccurrences(of: "^mailto:", with: "", options: [.regularExpression, .caseInsensitive]).lowercased()
             let name = p.params["CN"].flatMap { $0.isEmpty ? nil : $0 }
-            return (email, name, (p.params["PARTSTAT"] ?? "").uppercased() == "DECLINED")
+            return (email, name, (p.params["PARTSTAT"] ?? "").uppercased() == "DECLINED", ["RESOURCE", "ROOM"].contains((p.params["CUTYPE"] ?? "").uppercased()))
         }
         if !owner.isEmpty, attendees.contains(where: { $0.email == owner && $0.declined }) { return }
         // Google's own conference field first, then wherever else a link was pasted.
@@ -311,7 +322,9 @@ public func parseCalendar(_ text: String, from: Date, to: Date) -> [CalendarEven
         events.append(CalendarEvent(
             id: "\(event.uid)@\(isoString(start))", seriesId: seriesId, title: title.isEmpty ? "Untitled event" : title,
             start: isoString(start), end: isoString(end), allDay: isDate,
-            attendees: attendees.map { CalendarEvent.Attendee(name: $0.name == $0.email ? nil : $0.name, email: $0.email) },
+            attendees: attendees.map {
+                CalendarEvent.Attendee(name: $0.name == $0.email ? nil : $0.name, email: $0.email, declined: $0.declined ? true : nil, resource: $0.resource ? true : nil)
+            },
             meetUrl: findCallLink(links)))
     }
 
