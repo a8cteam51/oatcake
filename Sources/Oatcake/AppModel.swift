@@ -304,16 +304,23 @@ final class AppModel {
         return made
     }
 
-    func trash(_ node: TreeNode) {
+    /// Moves meetings or folders to the Trash. One that can't be moved stops the rest, and says why.
+    func trash(_ nodes: [TreeNode]) {
         attempt {
-            try meetings.trash(node.path)
-            toast("Moved “\(node.kind == .meeting ? meetingTitle(node) : node.name)” to the Trash")
+            for node in nodes { try meetings.trash(node.path) }
+            if nodes.count == 1, let node = nodes.first {
+                toast("Moved “\(node.kind == .meeting ? meetingTitle(node) : node.name)” to the Trash")
+            } else if !nodes.isEmpty {
+                toast("Moved \(nodes.count) meetings to the Trash")
+            }
         }
         refresh()
     }
 
-    func reveal(_ path: String) {
-        if let url = try? resolveInside(meetings.root, path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    func reveal(_ path: String) { reveal([path]) }
+
+    func reveal(_ paths: [String]) {
+        NSWorkspace.shared.activateFileViewerSelecting(paths.compactMap { try? resolveInside(meetings.root, $0) })
     }
 
     func readMeeting(_ path: String) throws -> MeetingFiles { try meetings.read(path) }

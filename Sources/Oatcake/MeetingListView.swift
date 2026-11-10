@@ -11,6 +11,9 @@ struct MeetingListView: View {
     /// The whole Meetings folder, which search looks through.
     let root: TreeNode?
     @ViewState private var renaming: TreeNode?
+    /// The meetings selected with ⌘- or ⇧-click. One selected meeting is the open one, so this only
+    /// matters when there are several.
+    @ViewState private var picked: Set<String> = []
     @ViewState private var draft = ""
     @ViewState private var query = ""
     /// What the last search of every meeting's text found, and the words it was for.
@@ -65,14 +68,43 @@ struct MeetingListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Picking a meeting leaves this list as it is, rather than swapping it for the meeting's folder.
-                List(selection: Binding(get: { selectedPath }, set: { if let p = $0 { open(p, hit: hits[p]) } })) {
+                // Picking several (⌘- or ⇧-click) leaves the open meeting open, for acting on them all at once.
+                let listed = Set(rows.map(\.path))
+                List(selection: Binding(get: { selected(in: listed) }, set: { paths in
+                    picked = paths
+                    if paths.count == 1, let p = paths.first { open(p, hit: hits[p]) }
+                })) {
                     ForEach(rows) { row($0, everything: everything, folder: folder?.path ?? "", hit: hits[$0.path]).tag($0.path) }
                 }
                 .listStyle(.plain)
+                // Right-clicking a selected meeting acts on every selected one; any other, on just that one.
+                .contextMenu(forSelectionType: String.self) { paths in
+                    let nodes = rows.filter { paths.contains($0.path) }
+                    if nodes.count == 1, let m = nodes.first {
+                        Button("Rename…") { draft = meetingTitle(m); renaming = m }
+                        Button("Show in Finder") { model.reveal(m.path) }
+                        Divider()
+                        Button("Move to Trash") { model.trash([m]) }
+                    } else if nodes.count > 1 {
+                        Button("Show in Finder") { model.reveal(nodes.map(\.path)) }
+                        Divider()
+                        Button("Move \(nodes.count) Meetings to Trash") { model.trash(nodes) }
+                    }
+                }
+                // ⌘⌫, as in Finder.
+                .onKeyPress(.delete, phases: .down) { press in
+                    guard press.modifiers == .command else { return .ignored }
+                    let nodes = rows.filter { selected(in: listed).contains($0.path) }
+                    if nodes.isEmpty { return .ignored }
+                    model.trash(nodes)
+                    return .handled
+                }
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onChange(of: model.searchRequest) { searching = true }
+        // A meeting opened from elsewhere (the sidebar, a search, a reminder) ends a selection of several.
+        .onChange(of: selectedPath) { picked = [] }
         // Searched again when the words change, and when a meeting does.
         .task(id: "\(model.diskVersion) \(search)") { await searchText(search) }
         .alert("Rename meeting", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -87,6 +119,13 @@ struct MeetingListView: View {
     private var selectedPath: String? {
         if case .meeting(let path, _) = model.selection { return path }
         return nil
+    }
+
+    /// What the list shows as selected: the meetings picked, while there are several still listed;
+    /// otherwise the open meeting.
+    private func selected(in listed: Set<String>) -> Set<String> {
+        let several = picked.intersection(listed)
+        return several.count > 1 ? several : Set([selectedPath].compactMap { $0 })
     }
 
     /// What a meeting is listed as, besides its text.
@@ -158,11 +197,5 @@ struct MeetingListView: View {
         }
         .padding(.vertical, 4)
         .draggable(dragPrefix + m.path)
-        .contextMenu {
-            Button("Rename…") { draft = title; renaming = m }
-            Button("Show in Finder") { model.reveal(m.path) }
-            Divider()
-            Button("Move to Trash") { model.trash(m) }
-        }
     }
 }

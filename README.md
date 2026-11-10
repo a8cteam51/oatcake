@@ -60,7 +60,8 @@ meeting itself. Settings (⌘,) is its own window, in panes; changes apply as yo
 ⌘N starts a new recording, ⌥⌘F searches every meeting from the box above the meeting list (its
 title, folder, summary, to-dos, notes and transcript; a meeting found by its text shows the line
 with the words and opens there), and ⌘F finds words in the transcript you're reading. ⇧⌘N makes a
-folder and ⌘R refreshes the calendar; all of these are in the File and Edit menus.
+folder and ⌘R refreshes the calendar; all of these are in the File and Edit menus. ⌘- or
+⇧-click selects several meetings in the list, and right-click or ⌘⌫ moves them all to the Trash.
 
 1. **Record.** New recording, or click an event under Upcoming. Pick the folder (a calendar
    event picks the folder named like it, or the one its earlier meetings are in, or offers a
