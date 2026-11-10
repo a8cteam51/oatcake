@@ -113,12 +113,38 @@ private func savedRecording(_ meeting: URL) -> String? {
     return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["recording"] as? String ?? ""
 }
 
+/// A summary and its to-dos, as the model wrote them.
+public struct SummaryDraft: Sendable, Equatable {
+    public var summary: String
+    public var todo: String
+    public init(summary: String, todo: String) {
+        self.summary = summary
+        self.todo = todo
+    }
+}
+
 /**
  * Writes a saved meeting's summary and to-dos from its transcript, your notes and meeting.json. It
- * runs after every save, and again from Write summary when the model couldn't be reached. To-dos
- * already in todo.md are kept.
+ * runs after every save, and again from Write summary when the model couldn't be reached.
  */
 public func writeSummary(_ config: Config, meeting rel: String) async throws {
+    try writeSummary(try await draftSummary(config, meeting: rel), config: config, meeting: rel)
+}
+
+/// Puts a summary and its to-dos into a meeting. To-dos already in todo.md are kept. The meeting is
+/// named here rather than when the model was asked, because it can be renamed or moved meanwhile.
+public func writeSummary(_ draft: SummaryDraft, config: Config, meeting rel: String) throws {
+    let meetings = Meetings(root: config.meetingsRoot)
+    try meetings.write(rel, .summary, draft.summary)
+    if !draft.todo.isEmpty {
+        // Read now: to-dos may have been added or ticked while the model was writing.
+        let existing = try meetings.read(rel).todo.replacingOccurrences(of: #"\s*$"#, with: "", options: .regularExpression)
+        try meetings.write(rel, .todo, existing.isEmpty ? draft.todo : existing + "\n" + draft.todo)
+    }
+}
+
+/// Asks the model for a meeting's summary and to-dos. Nothing is written.
+public func draftSummary(_ config: Config, meeting rel: String) async throws -> SummaryDraft {
     let meetings = Meetings(root: config.meetingsRoot)
     let files = try meetings.read(rel)
     guard !files.transcript.trimmed.isEmpty else { throw OatcakeError("This meeting has no transcript to summarise.") }
@@ -127,12 +153,7 @@ public func writeSummary(_ config: Config, meeting rel: String) async throws {
     let title = files.meta.title ?? name.replacingOccurrences(of: #"^\d{4}-\d{2}-\d{2} \d{4} "#, with: "", options: .regularExpression)
     let (summary, todo) = try await summarise(config, title: title, participants: files.meta.participants ?? [config.myName],
                                               notes: notes, transcript: files.transcript)
-    try meetings.write(rel, .summary, summary)
-    if !todo.isEmpty {
-        // Read again: to-dos may have been added or ticked while the model was writing.
-        let existing = try meetings.read(rel).todo.replacingOccurrences(of: #"\s*$"#, with: "", options: .regularExpression)
-        try meetings.write(rel, .todo, existing.isEmpty ? todo : existing + "\n" + todo)
-    }
+    return SummaryDraft(summary: summary, todo: todo)
 }
 
 /// A paragraph of the transcript runs for about this long at most before the next pause starts a new one.

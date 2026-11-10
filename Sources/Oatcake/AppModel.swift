@@ -85,6 +85,8 @@ final class AppModel {
     /// Meetings whose summary is being written now, and why the last attempt failed, by path.
     var summarising = Set<String>()
     var summaryErrors: [String: String] = [:]
+    /// Where each meeting being summarised lives now: it can be renamed or moved while the model writes.
+    private var summaryJobs: [UUID: String] = [:]
     var reviewDrafts: [String: ReviewDraft] = [:]
     var live: Recording?
     /// The call being recorded, as it's heard: lines from the live helper, and what the helper is doing.
@@ -257,6 +259,10 @@ final class AppModel {
     func moved(from: String, to: String) {
         let remap = { (p: String) in p == from ? to : p.hasPrefix(from + "/") ? to + p.dropFirst(from.count) : p }
         folder = remap(folder)
+        // A summary on its way follows the meeting to where it is now.
+        summarising = Set(summarising.map(remap))
+        summaryJobs = summaryJobs.mapValues(remap)
+        summaryErrors = Dictionary(summaryErrors.map { (remap($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
         switch selection {
         case .meeting(let p, let jump): selection = .meeting(remap(p), jump: jump)
         case .folder(let p): selection = .folder(remap(p))
@@ -817,14 +823,18 @@ final class AppModel {
         guard !summarising.contains(path) else { return }
         summarising.insert(path)
         summaryErrors.removeValue(forKey: path)
+        let job = UUID()
+        summaryJobs[job] = path
         let config = config
         Task {
             do {
-                try await OatcakeCore.writeSummary(config, meeting: path)
+                let draft = try await OatcakeCore.draftSummary(config, meeting: path)
+                try OatcakeCore.writeSummary(draft, config: config, meeting: summaryJobs[job] ?? path)
             } catch {
-                summaryErrors[path] = error.localizedDescription
+                summaryErrors[summaryJobs[job] ?? path] = error.localizedDescription
             }
-            summarising.remove(path)
+            summarising.remove(summaryJobs[job] ?? path)
+            summaryJobs.removeValue(forKey: job)
             refresh()
         }
     }

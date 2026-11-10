@@ -226,6 +226,16 @@ private func fixture(_ name: String) throws -> URL {
         do { try await writeSummary(config, meeting: saved) } catch { failed = true }
         #expect(failed)
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
+
+        // When the model has answered, its summary goes where the meeting is by then (it was renamed
+        // meanwhile), and a to-do added in the meantime is kept above the model's.
+        let meetings = Meetings(root: root)
+        let renamed = try meetings.retitle(saved, to: "Weekly sync with Alex")
+        try meetings.write(renamed, .todo, "- [ ] Added while the model was writing\n")
+        try writeSummary(SummaryDraft(summary: "## Topic\nDone.\n", todo: "- [ ] From the model — Alex Kim\n"), config: config, meeting: renamed)
+        let files = try meetings.read(renamed)
+        #expect(files.summary == "## Topic\nDone.\n")
+        #expect(files.todo == "- [ ] Added while the model was writing\n- [ ] From the model — Alex Kim\n")
     }
 
     /// Two calls with the same title that started in the same minute are two meetings; saving one again reuses its own folder.
