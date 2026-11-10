@@ -216,6 +216,50 @@ private func fixture(_ name: String) throws -> URL {
         #expect(failed)
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
     }
+
+    /// Two calls with the same title that started in the same minute are two meetings; saving one again reuses its own folder.
+    @Test func sameMinuteCallsKeepTheirOwnFolders() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-save-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        var config = Config.defaults()
+        config.outputDir = tmp.appendingPathComponent("Meetings").path
+        config.keepAudio = true
+        config.llm = LlmConfig(provider: .openaiCompatible) // no endpoint: the model can't be reached
+        func recording(_ id: String, at startedAt: String, saying text: String) throws -> Recording {
+            let dir = tmp.appendingPathComponent(id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let analysis = Analysis(title: "Call", startedAt: startedAt, endedAt: startedAt, lines: [Line(speaker: me, start: 1, end: 3, text: text)],
+                                    speakers: [], echoLinesRemoved: 0, me: nil, warnings: [], embeddingModel: voiceprintModel)
+            try encodeJSON(analysis).write(to: dir.appendingPathComponent("analysis.json"), atomically: true, encoding: .utf8)
+            return Recording(id: id, dir: dir, title: "Call", folder: "", startedAt: Date(), state: .processed)
+        }
+        let transcript = { (path: String) in readText(config.meetingsRoot.appendingPathComponent(path).appendingPathComponent("transcript.md")) }
+
+        let first = try await saveMeeting(config, try recording("2026-11-10T14-00-10-000Z", at: "2026-11-10T14:00:10.000Z", saying: "First call."),
+                                          decisions: [:], folder: "") { _ in }
+        let later = try recording("2026-11-10T14-00-45-000Z", at: "2026-11-10T14:00:45.000Z", saying: "Second call.")
+        let second = try await saveMeeting(config, later, decisions: [:], folder: "") { _ in }
+        #expect(second.path == first.path + " (2)")
+        #expect(transcript(first.path).contains("First call."))
+        #expect(transcript(second.path).contains("Second call."))
+
+        let again = try await saveMeeting(config, later, decisions: [:], folder: "") { _ in }
+        #expect(again.path == second.path)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: config.outputDir).count == 2)
+    }
+}
+
+@Suite struct EnvironmentTests {
+    /// Claude Code never gets Oatcake's API keys; the analysis helper does, as a key from your shell is its fallback too.
+    @Test func childEnvironments() {
+        let name = "OATCAKE_OPENAI_API_KEY"
+        let before = ProcessInfo.processInfo.environment[name]
+        setenv(name, "from-the-shell", 1)
+        defer { if let before { setenv(name, before, 1) } else { unsetenv(name) } }
+        #expect(ShellEnvironment.childEnvironment()[name] == nil)
+        #expect(ShellEnvironment.childEnvironment(keepApiKeys: true)[name] == "from-the-shell")
+        #expect(ShellEnvironment.childEnvironment()["PATH"] == ShellEnvironment.path)
+    }
 }
 
 @Suite struct VoiceprintTests {

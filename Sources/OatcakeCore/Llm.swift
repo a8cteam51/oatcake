@@ -171,12 +171,12 @@ public enum ChildProcess {
         public var stderr: String
     }
 
-    public static func run(_ executable: URL, _ arguments: [String], input: String? = nil, directory: URL? = nil,
+    public static func run(_ executable: URL, _ arguments: [String], input: String? = nil, directory: URL? = nil, keepApiKeys: Bool = false,
                            onStart: ((Process) -> Void)? = nil, onLine: (@Sendable (String) -> Void)? = nil) async throws -> Result {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        var environment = ShellEnvironment.childEnvironment()
+        var environment = ShellEnvironment.childEnvironment(keepApiKeys: keepApiKeys)
         if let directory {
             process.currentDirectoryURL = directory
             // Claude Code takes its working folder (which Ask's file tools are confined to) from PWD,

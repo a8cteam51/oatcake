@@ -174,12 +174,15 @@ public enum ShellEnvironment {
     }
 
     /// The environment for child processes: the login shell's PATH, and none of Oatcake's API keys
-    /// (Claude Code always uses its own sign-in and billing, whichever provider is chosen).
-    public static func childEnvironment() -> [String: String] {
+    /// (Claude Code always uses its own sign-in and billing, whichever provider is chosen). Oatcake's
+    /// own analysis helper keeps them: a key from your shell is its fallback too.
+    public static func childEnvironment(keepApiKeys: Bool = false) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = path
-        env.removeValue(forKey: "ANTHROPIC_API_KEY")
-        env.removeValue(forKey: "OATCAKE_OPENAI_API_KEY")
+        if !keepApiKeys {
+            env.removeValue(forKey: "ANTHROPIC_API_KEY")
+            env.removeValue(forKey: "OATCAKE_OPENAI_API_KEY")
+        }
         return env
     }
 }

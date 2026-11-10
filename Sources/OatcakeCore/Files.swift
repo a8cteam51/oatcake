@@ -103,6 +103,14 @@ extension String {
 
 // MARK: - Dates
 
+/// Dates in folder names, to-dos and the windows are Gregorian, whatever calendar the Mac is set to
+/// (a Buddhist or Japanese calendar counts years differently, and some have a thirteenth month).
+public var gregorian: Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    return calendar
+}
+
 let isoFormatter: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

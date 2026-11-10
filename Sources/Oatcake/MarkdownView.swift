@@ -1,5 +1,5 @@
 // Renders the Markdown that summaries and Ask answers come in: headings, paragraphs, lists, quotes,
-// code and rules, with inline emphasis and links. Transcript times like [12:34] become links that
+// code, tables and rules, with inline emphasis and links. Transcript times like [12:34] become links that
 // jump to that moment; links to meeting folders open the meeting. Raw HTML stays as text.
 
 import Foundation
@@ -53,6 +53,20 @@ struct MarkdownView: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.fill))
         case .rule:
             Divider()
+        case .table(let rows, let hasHeader):
+            // As wide as its content, like the bordered tables the Electron version drew.
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 0, verticalSpacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    if index > 0 { Divider().gridCellUnsizedAxes(.horizontal) }
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            Text(cell).font(.system(size: fontSize - 1, weight: hasHeader && index == 0 ? .semibold : .regular))
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                        }
+                    }
+                }
+            }
+            .overlay { RoundedRectangle(cornerRadius: 4).stroke(Color.line) }
         }
     }
 }
@@ -65,6 +79,8 @@ struct MarkdownBlock {
         case quote
         case code
         case rule
+        /// Rows of cells, the header row first when there is one.
+        case table(rows: [[AttributedString]], hasHeader: Bool)
     }
     var kind: Kind
     var text: AttributedString
@@ -85,11 +101,29 @@ func markdownBlocks(_ markdown: String) -> [MarkdownBlock] {
     }
     var blocks: [MarkdownBlock] = []
     var current: (id: Int, block: MarkdownBlock)?
+    // The table being read: row (the header is row 0) → column → text. An empty cell has no run of its own.
+    var table: (id: Int, cells: [Int: [Int: AttributedString]])?
+    func endTable() {
+        guard let cells = table?.cells else { return }
+        let columns = (cells.values.flatMap(\.keys).max() ?? 0) + 1
+        let rows = cells.keys.sorted().map { row in (0..<columns).map { cells[row]?[$0] ?? AttributedString() } }
+        blocks.append(MarkdownBlock(kind: .table(rows: rows, hasHeader: cells[0] != nil), text: AttributedString()))
+        table = nil
+    }
     for run in parsed.runs {
         var piece = AttributedString(parsed[run.range])
         // Inline emphasis, code and links stay for Text to draw; the block structure is laid out here.
         piece.presentationIntent = nil
         let intent = run.presentationIntent
+        if let cell = tableCell(intent) {
+            if let open = current { blocks.append(open.block) }
+            current = nil
+            if table?.id != cell.table { endTable() }
+            if table == nil { table = (cell.table, [:]) }
+            table!.cells[cell.row, default: [:]][cell.column, default: AttributedString()] += piece
+            continue
+        }
+        endTable()
         let id = intent?.components.first?.identity ?? -1
         if current?.id == id {
             current!.block.text += piece
@@ -99,7 +133,24 @@ func markdownBlocks(_ markdown: String) -> [MarkdownBlock] {
         current = (id, MarkdownBlock(kind: kind(of: intent), text: piece))
     }
     if let current { blocks.append(current.block) }
+    endTable()
     return blocks
+}
+
+/// Where a run sits in a table, if it's in one. The header is row 0, so body rows follow it whatever they count from.
+private func tableCell(_ intent: PresentationIntent?) -> (table: Int, row: Int, column: Int)? {
+    var table: Int?
+    var row = 0, column = 0
+    for component in intent?.components ?? [] {
+        switch component.kind {
+        case .table: table = component.identity
+        case .tableHeaderRow: row = 0
+        case .tableRow(let index): row = index + 1
+        case .tableCell(let index): column = index
+        default: break
+        }
+    }
+    return table.map { ($0, row, column) }
 }
 
 private func kind(of intent: PresentationIntent?) -> MarkdownBlock.Kind {

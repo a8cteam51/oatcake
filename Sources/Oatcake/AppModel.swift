@@ -81,6 +81,8 @@ final class AppModel {
     /// Recorders running now, by recording ID.
     private var active: [String: Recording] = [:]
     private var analysing = Set<String>()
+    /// The analysis helper running for each recording, so discarding a recording stops its helper too.
+    private var helpers: [String: Process] = [:]
     private var autoStarted = Set<String>()
     private var saving = 0
     private var watcher: FolderWatcher?
@@ -523,11 +525,19 @@ final class AppModel {
         progress[id] = JobProgress(step: progress[id]?.step ?? "Starting")
         Task {
             // Steps arrive as they happen; the outcome is read from the full output once it exits.
-            let result = try? await ChildProcess.run(Bundle.main.executableURL!, ["--analyse", rec.dir.path], onLine: { line in
+            let result = try? await ChildProcess.run(Bundle.main.executableURL!, ["--analyse", rec.dir.path], keepApiKeys: true, onStart: { process in
+                Task { @MainActor in self.helpers[id] = process }
+            }, onLine: { line in
                 guard let p = try? JSONDecoder().decode(AnalysisProgress.self, from: Data(line.utf8)), p.step != nil else { return }
                 Task { @MainActor in self.apply(id, p) }
             })
             analysing.remove(id)
+            helpers.removeValue(forKey: id)
+            // Discarded while it ran: nothing to report.
+            guard Recordings.get(id) != nil else {
+                progress.removeValue(forKey: id)
+                return
+            }
             let outcome = (result?.stdout ?? "").split(separator: "\n").reversed()
                 .compactMap { try? JSONDecoder().decode(AnalysisProgress.self, from: Data($0.utf8)) }
                 .first { $0.done == true || $0.error != nil }
@@ -563,6 +573,8 @@ final class AppModel {
         confirmation = Confirmation(title: "Discard this recording?",
                                     text: "The audio, transcript and your notes will be deleted. This can’t be undone.",
                                     ok: "Discard", cancel: "Cancel") { [self] in
+            // A helper still analysing it would write its transcript and clips back after the folder had gone.
+            helpers.removeValue(forKey: rec.id)?.terminate()
             try Recordings.discard(rec.id)
             progress.removeValue(forKey: rec.id)
             openFolder(folder)

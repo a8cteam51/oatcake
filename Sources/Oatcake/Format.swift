@@ -11,7 +11,7 @@ func ordinal(_ d: Int) -> String {
     return "\(d)\(suffix)"
 }
 
-private var cal: Calendar { Calendar.current }
+private var cal: Calendar { gregorian }
 
 /// "October 29th, 2026"
 func longDate(_ d: Date) -> String { "\(months[cal.component(.month, from: d) - 1]) \(ordinal(cal.component(.day, from: d))), \(cal.component(.year, from: d))" }

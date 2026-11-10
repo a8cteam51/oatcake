@@ -275,7 +275,7 @@ struct SidebarView: View {
 
     /// "21:10" today, otherwise "Nov 4, 21:10": tells two recordings of the same call apart.
     private func jobWhen(_ d: Date) -> String {
-        Calendar.current.isDateInToday(d) ? hhmm(d) : "\(shortMonth(d)) \(Calendar.current.component(.day, from: d)), \(hhmm(d))"
+        Calendar.current.isDateInToday(d) ? hhmm(d) : "\(shortMonth(d)) \(gregorian.component(.day, from: d)), \(hhmm(d))"
     }
 }
 

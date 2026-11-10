@@ -44,15 +44,16 @@ public enum Secrets {
     /// Saves a secret, or removes it when the value is blank.
     public static func set(_ name: SecretName, _ value: String) throws {
         let clean = value.trimmed
-        keychainDelete(account: name.rawValue)
-        guard !clean.isEmpty else { return }
-        let status = SecItemAdd([
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: name.rawValue,
-            kSecAttrLabel: "Oatcake: \(name.rawValue)",
-            kSecValueData: Data(clean.utf8),
-        ] as CFDictionary, nil)
+        guard !clean.isEmpty else {
+            keychainDelete(account: name.rawValue)
+            return
+        }
+        // Changed in place, and only added when there's none yet: a save that fails keeps the old value.
+        let item = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: name.rawValue] as [CFString: Any]
+        var status = SecItemUpdate(item as CFDictionary, [kSecValueData: Data(clean.utf8)] as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(item.merging([kSecAttrLabel: "Oatcake: \(name.rawValue)", kSecValueData: Data(clean.utf8)]) { $1 } as CFDictionary, nil)
+        }
         guard status == errSecSuccess else { throw OatcakeError("Couldn't save to the Keychain (\(status)).") }
     }
 
@@ -77,7 +78,7 @@ public enum Secrets {
 
     /// The Electron version kept secrets in secrets.json, encrypted with Chromium's OSCrypt under a
     /// key in the Keychain ("Oatcake Safe Storage"). They move into the Keychain once, and the file
-    /// goes. A secret that can't be read is left in the file for the next launch.
+    /// goes. A secret that can't be read, or can't be saved, is left in the file for the next launch.
     public static func migrateFromElectron() {
         let file = Paths.data.appendingPathComponent("secrets.json")
         guard let stored = tryJSON([String: String].self, file), !stored.isEmpty else { return }
@@ -86,7 +87,9 @@ public enum Secrets {
         for (key, value) in stored {
             guard let name = SecretName(rawValue: key), let data = Data(base64Encoded: value),
                   let plain = decryptOSCrypt(data, password: password) else { continue }
-            if keychainRead(account: name.rawValue) == nil { try? set(name, plain) }
+            if keychainRead(account: name.rawValue) == nil {
+                do { try set(name, plain) } catch { continue }
+            }
             remaining.removeValue(forKey: key)
         }
         if remaining.isEmpty {

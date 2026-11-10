@@ -229,7 +229,7 @@ public func matchingFolder(_ title: String, in tree: TreeNode) -> String? {
 
 /// A meeting's folder name: "2026-11-05 1400 Weekly sync", in local time.
 public func meetingFolderName(title: String, startedAt: Date) -> String {
-    let c = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: startedAt)
+    let c = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: startedAt)
     let stamp = String(format: "%04d-%02d-%02d %02d%02d", c.year!, c.month!, c.day!, c.hour!, c.minute!)
     let clean = title.replacingOccurrences(of: #"[/:\\]"#, with: "-", options: .regularExpression).trimmed
     return "\(stamp) \(clean.isEmpty ? "Call" : clean)"

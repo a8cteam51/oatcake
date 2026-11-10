@@ -82,8 +82,16 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
 
     let startedAt = parseISO(analysis.startedAt) ?? rec.startedAt
     let name = meetingFolderName(title: analysis.title, startedAt: startedAt)
-    let outRel = folder.isEmpty ? name : folder + "/" + name
-    let out = try resolveInside(config.meetingsRoot, outRel)
+    // Another call with the same title in the same minute keeps its folder, and this one is numbered.
+    // Saving this recording again (after a failure) goes back into its own folder.
+    var outRel = folder.isEmpty ? name : folder + "/" + name
+    var out = try resolveInside(config.meetingsRoot, outRel)
+    var number = 2
+    while let other = savedRecording(out), other != rec.id {
+        outRel = (folder.isEmpty ? name : folder + "/" + name) + " (\(number))"
+        out = try resolveInside(config.meetingsRoot, outRel)
+        number += 1
+    }
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     try transcript.write(to: out.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
     if summaryError == nil { try summary.write(to: out.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8) }
@@ -130,9 +138,17 @@ public func writeSummary(_ config: Config, meeting rel: String) async throws {
                                               notes: notes, transcript: files.transcript)
     try meetings.write(rel, .summary, summary)
     if !todo.isEmpty {
-        let existing = files.todo.replacingOccurrences(of: #"\s*$"#, with: "", options: .regularExpression)
+        // Read again: to-dos may have been added or ticked while the model was writing.
+        let existing = try meetings.read(rel).todo.replacingOccurrences(of: #"\s*$"#, with: "", options: .regularExpression)
         try meetings.write(rel, .todo, existing.isEmpty ? todo : existing + "\n" + todo)
     }
+}
+
+/// The recording a meeting folder was saved from: nil when there's no meeting there, "" for a
+/// meeting that names none (a Granola import, or a meeting.json that can't be read).
+private func savedRecording(_ meeting: URL) -> String? {
+    guard let data = try? Data(contentsOf: meeting.appendingPathComponent("meeting.json")) else { return nil }
+    return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["recording"] as? String ?? ""
 }
 
 private func mergeRuns(_ lines: [Line]) -> [Line] {

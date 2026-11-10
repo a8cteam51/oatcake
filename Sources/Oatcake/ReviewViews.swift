@@ -135,7 +135,6 @@ struct ReviewView: View {
     @ViewState private var people: [String] = []
     @ViewState private var voices: [String: Voice] = [:]
     @ViewState private var showTranscript = false
-    @ViewState private var saving = false
     @ViewState private var error = ""
     @ViewState private var player = ClipPlayer()
 
@@ -367,9 +366,13 @@ struct ReviewView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    /// Kept by the app rather than this screen, so Save and Discard stay off while a save runs even
+    /// if you look at something else and come back.
+    private var saving: Bool { model.saveStep[rec.id] != nil }
+
     private func save(_ analysis: Analysis) {
         error = ""
-        saving = true
+        model.saveStep[rec.id] = "Saving"
         // An unnamed voice is sent with no name: it's saved as "Voice N" but never remembered as a person.
         let decisions = voices.mapValues { v -> Decision in
             if let into = v.into { return .merge(into: into) }
@@ -382,17 +385,19 @@ struct ReviewView: View {
                 let path = saved.path
                 player.stop()
                 model.refresh()
-                model.folder = parentOf(path)
-                // The tree reloads in the background; open the meeting once it's there.
-                for _ in 0..<40 where model.tree?.find(path) == nil {
-                    try? await Task.sleep(for: .milliseconds(50))
+                // Still here: show the meeting. If you've moved on (say, to the next call's notes), you stay there.
+                if model.selection == .job(rec.id) {
+                    model.folder = parentOf(path)
+                    // The tree reloads in the background; open the meeting once it's there.
+                    for _ in 0..<40 where model.tree?.find(path) == nil {
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
+                    if model.selection == .job(rec.id) { model.openMeeting(path) }
                 }
-                model.openMeeting(path)
                 model.toast(saved.summaryError == nil ? "Saved to \(folderPath(folder))"
                             : "Saved to \(folderPath(folder)), without a summary for now")
             } catch {
                 self.error = error.localizedDescription
-                saving = false
             }
         }
     }

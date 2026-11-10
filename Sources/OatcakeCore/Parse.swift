@@ -160,7 +160,7 @@ public func allTodoItems(_ meetings: [MeetingTodos]) -> [TodoItem] {
 public func dueDate(_ due: String, meetingDate: Date? = nil) -> Date? {
     guard !due.trimmed.isEmpty else { return nil }
     let met = meetingDate ?? Date()
-    let calendar = Calendar.current
+    let calendar = gregorian
     let text = due.replacingOccurrences(of: #"^[A-Za-z]+,\s*"#, with: "", options: .regularExpression).trimmed
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
