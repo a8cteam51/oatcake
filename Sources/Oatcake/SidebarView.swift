@@ -28,7 +28,10 @@ struct SidebarView: View {
             }
             Section {
                 if let tree = model.tree {
-                    ForEach(tree.subfolders) { FolderTree(node: $0, open: $open, renaming: $renaming, draft: $draft, newFolderIn: $newFolderIn, dropTarget: $dropTarget) }
+                    ForEach(visibleFolders(tree), id: \.node.path) { item in
+                        FolderRow(node: item.node, depth: item.depth, open: $open, renaming: $renaming, draft: $draft,
+                                  newFolderIn: $newFolderIn, dropTarget: $dropTarget)
+                    }
                     if tree.subfolders.isEmpty { Text("No folders yet.").foregroundStyle(.secondary).font(.callout) }
                 }
             } header: {
@@ -112,6 +115,21 @@ struct SidebarView: View {
 
     private func newRecording(_ event: CalendarEvent? = nil) {
         model.selection = model.live != nil ? .live : .new(event)
+    }
+
+    /// The folders to show, depth first, skipping the inside of closed ones. They're drawn as flat,
+    /// indented rows (as the Electron version did) rather than nested disclosure groups, which left
+    /// stale highlights and stray rows behind in the sidebar's outline.
+    private func visibleFolders(_ tree: TreeNode) -> [(node: TreeNode, depth: Int)] {
+        var out: [(TreeNode, Int)] = []
+        func walk(_ node: TreeNode, _ depth: Int) {
+            for child in node.subfolders {
+                out.append((child, depth))
+                if open.contains(child.path) { walk(child, depth + 1) }
+            }
+        }
+        walk(tree, 0)
+        return out
     }
 
     /// A selected folder's parents open, so it's visible.
@@ -270,10 +288,11 @@ private struct NewRecordingLabelStyle: LabelStyle {
     }
 }
 
-/// One folder in the sidebar, with its subfolders (meetings are listed in the middle column).
-private struct FolderTree: View {
+/// One folder in the sidebar (meetings are listed in the middle column).
+private struct FolderRow: View {
     @Environment(AppModel.self) private var model
     let node: TreeNode
+    let depth: Int
     @Binding var open: Set<String>
     @Binding var renaming: TreeNode?
     @Binding var draft: String
@@ -281,26 +300,28 @@ private struct FolderTree: View {
     @Binding var dropTarget: String?
 
     var body: some View {
-        if node.subfolders.isEmpty {
-            row
-        } else {
-            DisclosureGroup(isExpanded: Binding(get: { open.contains(node.path) }, set: { if $0 { open.insert(node.path) } else { open.remove(node.path) } })) {
-                ForEach(node.subfolders) { FolderTree(node: $0, open: $open, renaming: $renaming, draft: $draft, newFolderIn: $newFolderIn, dropTarget: $dropTarget) }
+        HStack(spacing: 4) {
+            Button {
+                if open.contains(node.path) { open.remove(node.path) } else { open.insert(node.path) }
             } label: {
-                row
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(open.contains(node.path) ? 90 : 0))
+                    .frame(width: 12, height: 16)
+                    .contentShape(Rectangle())
             }
-        }
-    }
-
-    private var row: some View {
-        HStack {
-            Label(node.name, systemImage: "folder")
+            .buttonStyle(.plain)
+            .opacity(node.subfolders.isEmpty ? 0 : 1)
+            .disabled(node.subfolders.isEmpty)
+            Label(node.name, systemImage: "folder").lineLimit(1)
             Spacer()
             let count = node.meetings.count
             if count > 0 { Text("\(count)").foregroundStyle(.secondary).monospacedDigit() }
         }
+        .padding(.leading, CGFloat(depth) * 14)
+        .background(RoundedRectangle(cornerRadius: 5).fill(dropTarget == node.path ? Color.accentColor.opacity(0.25) : .clear).padding(-3))
         .tag(SidebarItem.folder(node.path))
-        .listRowBackground(dropTarget == node.path ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.2)) : nil)
         .draggable(dragPrefix + node.path)
         .dropDestination(for: String.self) { items, _ in
             guard let item = items.first, item.hasPrefix(dragPrefix) else { return false }

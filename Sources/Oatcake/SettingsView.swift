@@ -73,6 +73,7 @@ struct SettingsView: View {
                 Text("Runs on your Mac. Audio never leaves it for transcription.").settingsHint()
             }
 
+            PeopleSection()
             llmSection
             UpdatesSection()
         }
@@ -346,6 +347,77 @@ private struct SecretField: View {
         model.setSecret(name, draft)
         if done { draft = "" }
         load()
+    }
+}
+
+/// Settings › People: the voices Oatcake recognises, to rename or forget.
+private struct PeopleSection: View {
+    @ViewState private var voices: [KnownVoice] = []
+    @ViewState private var renaming: KnownVoice?
+    @ViewState private var forgetting: KnownVoice?
+    @ViewState private var draft = ""
+    @ViewState private var error = ""
+
+    var body: some View {
+        Section {
+            if voices.isEmpty {
+                Text("Nobody yet. Names you confirm in Who’s who are remembered here.").settingsHint()
+            }
+            ForEach(voices) { voice in
+                LabeledContent {
+                    HStack {
+                        Button("Rename…") {
+                            draft = voice.name
+                            renaming = voice
+                        }
+                        Button("Forget…") { forgetting = voice }
+                    }
+                } label: {
+                    Text(voice.name)
+                    Text(detail(voice))
+                }
+            }
+            if !error.isEmpty { Text(error).settingsHint(.red) }
+        } header: {
+            Text("People")
+        } footer: {
+            Text("Oatcake recognises these voices on calls. Renaming changes the name it uses from now on; meetings already saved keep the name they were saved with. Renaming someone to a name that’s already here makes them one person.")
+                .settingsHint()
+        }
+        .onAppear(perform: load)
+        .alert("Rename \(renaming?.name ?? "")", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $draft)
+            Button("Rename") { if let voice = renaming { change { try renameVoice(voice.name, to: draft) } } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let voice = renaming, draft.trimmed != voice.name, voices.contains(where: { $0.name == draft.trimmed }) {
+                Text("\(draft.trimmed) is already here: the two become one person.")
+            }
+        }
+        .alert("Forget \(forgetting?.name ?? "")?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+            Button("Forget", role: .destructive) { if let voice = forgetting { change { try forgetVoice(voice.name) } } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Oatcake won’t recognise their voice or suggest their name any more. Meetings already saved aren’t changed.")
+        }
+    }
+
+    private func load() { voices = knownVoices() }
+
+    private func change(_ work: () throws -> Void) {
+        do {
+            try work()
+            error = ""
+        } catch {
+            self.error = error.localizedDescription
+        }
+        load()
+    }
+
+    private func detail(_ voice: KnownVoice) -> String {
+        if voice.calls == 0 { return "Recognised again after the next call you save with them" }
+        let calls = "From \(voice.calls) call\(voice.calls == 1 ? "" : "s")"
+        return voice.lastSaved.map { "\(calls) · last \(shortDate($0))" } ?? calls
     }
 }
 

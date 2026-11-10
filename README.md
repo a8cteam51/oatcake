@@ -91,7 +91,9 @@ meeting itself. Settings (⌘,) is its own window; changes apply as you make the
    `2026-11-05 1400 Weekly sync/` with `summary.md`, `todo.md` (action items, as
    `- [ ] Task — Owner — due Fri, Oct 30 — [12:34]`), `transcript.md`, `notes.md` (your own
    notes, untouched; prep notes have no time) and `meeting.json` (title, times,
-   participants). Your notes steer what the summary focuses on but aren't copied into it.
+   participants). If the summary model can't be reached (Claude Code signed out, no network, a
+   local server that's down), the meeting is saved anyway with its transcript and notes, and
+   shows **Write summary** to write the summary and to-dos later. Your notes steer what the summary focuses on but aren't copied into it.
    Tabs: Summary (with the meeting's to-dos at the top), Transcript and My notes (⌘1–⌘3),
    each Rendered or as editable Markdown (saved as you type; Summary shows `todo.md` and
    `summary.md`). Tick to-dos off in place; a to-do's time jumps to that moment in the
@@ -282,6 +284,10 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
 - **Keep call audio:** off by default; audio is deleted once a meeting is saved.
+- **People:** the voices Oatcake recognises. **Rename** one ("Nate" to "Nate Allen") to change the
+  name it suggests from now on; renaming to a name that's already there makes them one person.
+  **Forget** stops it recognising them. Meetings already saved keep the names they were saved
+  with.
 - **Calendar:** paste your calendar's private iCal address (Google Calendar › Settings › your
   calendar › Integrate calendar › "Secret address in iCal format"). It's kept in the Keychain
   with the API keys. Oatcake fetches it once an

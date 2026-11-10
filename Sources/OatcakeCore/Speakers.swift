@@ -79,8 +79,8 @@ struct Voiceprints: Codable {
 
     /// A file from another fingerprint model (the Electron version's CAM++) keeps its names, so
     /// they're still suggested in review, but not its fingerprints.
-    static func load() -> Voiceprints {
-        guard let prints = tryJSON(Voiceprints.self, Paths.voiceprints) else { return Voiceprints(model: voiceprintModel, people: [:]) }
+    static func load(_ file: URL = Paths.voiceprints) -> Voiceprints {
+        guard let prints = tryJSON(Voiceprints.self, file) else { return Voiceprints(model: voiceprintModel, people: [:]) }
         if prints.model == voiceprintModel { return prints }
         return Voiceprints(model: voiceprintModel, people: prints.people.mapValues { _ in Person(samples: []) })
     }
@@ -110,6 +110,50 @@ func addVoiceprints(_ entries: [(name: String, embedding: [Float])], call: Strin
         person.samples = Array(person.samples.suffix(maxSamplesPerPerson))
         prints.people[entry.name] = person
     }
-    let encoder = JSONEncoder()
-    try writeAtomic(Paths.voiceprints, String(decoding: try encoder.encode(prints), as: UTF8.self) + "\n")
+    try prints.save()
+}
+
+extension Voiceprints {
+    func save(_ file: URL = Paths.voiceprints) throws {
+        try writeAtomic(file, String(decoding: try JSONEncoder().encode(self), as: UTF8.self) + "\n")
+    }
+}
+
+/// A person Oatcake knows by voice, for Settings › People.
+public struct KnownVoice: Identifiable, Equatable, Sendable {
+    public var name: String
+    /// Calls their voice was saved from; 0 for a name kept from the Electron version, whose
+    /// fingerprints no longer match.
+    public var calls: Int
+    public var lastSaved: Date?
+    public var id: String { name }
+}
+
+public func knownVoices(_ file: URL = Paths.voiceprints) -> [KnownVoice] {
+    Voiceprints.load(file).people.map { name, person in
+        KnownVoice(name: name, calls: person.samples.count, lastSaved: person.samples.compactMap { parseISO($0.at) }.max())
+    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+}
+
+/**
+ * Renames a person's voice ("Nate" to "Nate Allen"). When someone already has the new name, the two
+ * become one person with both sets of fingerprints (newest kept), rather than two people with the same
+ * voice, which would stop either being recognised. Meetings already saved keep the name they had.
+ */
+public func renameVoice(_ name: String, to newName: String, file: URL = Paths.voiceprints) throws {
+    let clean = newName.trimmed
+    guard !clean.isEmpty else { throw OatcakeError("Give them a name.") }
+    var prints = Voiceprints.load(file)
+    guard let person = prints.people.removeValue(forKey: name) else { throw OatcakeError("Oatcake doesn't know \(name)'s voice.") }
+    var merged = prints.people[clean] ?? Voiceprints.Person(samples: [])
+    merged.samples = Array((merged.samples + person.samples).sorted { $0.at < $1.at }.suffix(maxSamplesPerPerson))
+    prints.people[clean] = merged
+    try prints.save(file)
+}
+
+/// Forgets a person's voice: Oatcake no longer recognises them or suggests their name.
+public func forgetVoice(_ name: String, file: URL = Paths.voiceprints) throws {
+    var prints = Voiceprints.load(file)
+    prints.people.removeValue(forKey: name)
+    try prints.save(file)
 }

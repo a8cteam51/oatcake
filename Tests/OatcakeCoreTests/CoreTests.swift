@@ -217,3 +217,27 @@ private func fixture(_ name: String) throws -> URL {
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
     }
 }
+
+@Suite struct VoiceprintTests {
+    @Test func renamesAndMerges() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("voiceprints-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let sample = { (call: String, at: String) in Voiceprints.Sample(embedding: [1, 0], call: call, at: at) }
+        try Voiceprints(model: voiceprintModel, people: [
+            "Nate": .init(samples: [sample("a", "2026-11-01T10:00:00.000Z"), sample("b", "2026-11-03T10:00:00.000Z")]),
+            "Nate Allen": .init(samples: [sample("c", "2026-11-02T10:00:00.000Z")]),
+            "Alex": .init(samples: [sample("d", "2026-11-04T10:00:00.000Z")]),
+        ]).save(file)
+
+        try renameVoice("Nate", to: "  Nate Allen ", file: file)
+        let voices = knownVoices(file)
+        #expect(voices.map(\.name) == ["Alex", "Nate Allen"])
+        #expect(Voiceprints.load(file).people["Nate Allen"]?.samples.map(\.call) == ["a", "c", "b"])
+        #expect(voices.last?.calls == 3)
+        #expect(throws: OatcakeError.self) { try renameVoice("Nobody", to: "X", file: file) }
+        #expect(throws: OatcakeError.self) { try renameVoice("Alex", to: " ", file: file) }
+
+        try forgetVoice("Alex", file: file)
+        #expect(knownVoices(file).map(\.name) == ["Nate Allen"])
+    }
+}
