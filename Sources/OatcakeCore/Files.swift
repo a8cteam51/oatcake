@@ -2,8 +2,9 @@ import Foundation
 
 /// Where Oatcake keeps its own data. Meetings live wherever Settings › Meetings folder says.
 public enum Paths {
-    public static let data = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Oatcake", isDirectory: true)
+    /// OATCAKE_DATA_DIR points a development copy at another folder, so it leaves your own data alone.
+    public static let data = ProcessInfo.processInfo.environment["OATCAKE_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Oatcake", isDirectory: true)
     public static let models = data.appendingPathComponent("models", isDirectory: true)
     public static let recordings = data.appendingPathComponent("recordings", isDirectory: true)
     public static let voiceprints = data.appendingPathComponent("voiceprints.json")
@@ -74,7 +75,7 @@ func relativePath(_ url: URL, to root: URL) -> String {
 
 let jsonEncoder: JSONEncoder = {
     let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     return encoder
 }()
 

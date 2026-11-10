@@ -47,6 +47,7 @@ public struct MeetingMeta: Codable, Equatable, Sendable {
     public var endedAt: String?
     public var participants: [String]?
     public var source: String?
+    public init() {}
 }
 
 public struct MeetingFiles: Equatable, Sendable {
