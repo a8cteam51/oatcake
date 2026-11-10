@@ -112,6 +112,7 @@ final class AppModel {
         // than on whatever the sidebar selects by itself.
         tree = meetings.tree()
         todoMeetings = meetings.allTodos()
+        pending = Recordings.list().filter { $0.state == .recorded || $0.state == .processed }
         openLastMeeting()
         refresh()
         // An address set in an earlier session counts as already fetched, so this only fetches if stale.
@@ -132,10 +133,16 @@ final class AppModel {
             let (tree, pending, todos) = await Task.detached {
                 (meetings.tree(), Recordings.list().filter { $0.state == .recorded || $0.state == .processed }, meetings.allTodos())
             }.value
-            self.tree = tree
-            self.pending = pending
-            self.todoMeetings = todos
-            self.diskVersion += 1
+            // Without animation: the sidebar's outline animates rows in when a section (Needs review)
+            // appears, and leaves a stray copy of an expanded folder's selected row behind.
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) {
+                self.tree = tree
+                self.pending = pending
+                self.todoMeetings = todos
+                self.diskVersion += 1
+            }
             // Recordings waiting to be processed start straight away, in the background.
             for rec in pending where rec.state == .recorded && !autoStarted.contains(rec.id) {
                 autoStarted.insert(rec.id)
@@ -564,7 +571,7 @@ final class AppModel {
         }
     }
 
-    func saveRecording(_ rec: Recording, decisions: [String: Decision], folder: String) async throws -> String {
+    func saveRecording(_ rec: Recording, decisions: [String: Decision], folder: String) async throws -> SavedMeeting {
         saving += 1
         defer {
             saving -= 1
@@ -575,6 +582,13 @@ final class AppModel {
         return try await saveMeeting(config, rec, decisions: decisions, folder: folder) { step in
             Task { @MainActor in self.saveStep[rec.id] = step }
         }
+    }
+
+    /// Writes the summary of a meeting saved without one.
+    func writeSummary(_ path: String) async throws {
+        let config = config
+        try await OatcakeCore.writeSummary(config, meeting: path)
+        refresh()
     }
 
     // MARK: - Status

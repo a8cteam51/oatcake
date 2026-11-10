@@ -182,3 +182,38 @@ private func fixture(_ name: String) throws -> URL {
         #expect(Secrets.decryptOSCrypt(Data("plain".utf8), password: "pw") == nil)
     }
 }
+
+@Suite struct SaveTests {
+    /// The summary model can't be reached: the meeting is still saved, without summary.md.
+    @Test func savesWithoutTheModel() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-save-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let recDir = tmp.appendingPathComponent("rec"), root = tmp.appendingPathComponent("Meetings")
+        try FileManager.default.createDirectory(at: recDir, withIntermediateDirectories: true)
+        let analysis = Analysis(title: "Weekly sync", startedAt: "2026-11-10T14:00:00.000Z", endedAt: "2026-11-10T14:25:00.000Z",
+                                lines: [Line(speaker: me, start: 1, end: 3, text: "Morning all."), Line(speaker: "A", start: 4, end: 6, text: "Hi Sam.")],
+                                speakers: [SpeakerInfo(id: "A", seconds: 40, embedding: nil, suggestion: nil, quotes: [])],
+                                echoLinesRemoved: 0, me: nil, warnings: [], embeddingModel: voiceprintModel)
+        try encodeJSON(analysis).write(to: recDir.appendingPathComponent("analysis.json"), atomically: true, encoding: .utf8)
+        var config = Config.defaults()
+        config.myName = "Sam Taylor"
+        config.outputDir = root.path
+        config.keepAudio = true
+        config.llm = LlmConfig(provider: .openaiCompatible) // no endpoint: the model can't be reached
+        let rec = Recording(id: "2026-11-10T14-00-00-000Z", dir: recDir, title: "Weekly sync", folder: "", startedAt: Date(), state: .processed)
+
+        let saved = try await saveMeeting(config, rec, decisions: ["A": .name("Alex Kim")], folder: "") { _ in }
+        #expect(saved.summaryError != nil)
+        let out = root.appendingPathComponent(saved.path)
+        #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("transcript.md").path))
+        #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("meeting.json").path))
+        #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
+        #expect(readText(out.appendingPathComponent("transcript.md")).contains("**[00:04] Alex Kim:** Hi Sam."))
+        #expect(FileManager.default.fileExists(atPath: recDir.appendingPathComponent("saved.json").path))
+        // Writing it later fails the same way while the model is still unreachable, and leaves the meeting alone.
+        var failed = false
+        do { try await writeSummary(config, meeting: saved.path) } catch { failed = true }
+        #expect(failed)
+        #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("summary.md").path))
+    }
+}

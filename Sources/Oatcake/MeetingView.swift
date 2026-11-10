@@ -35,6 +35,8 @@ struct MeetingView: View {
     @ViewState private var pending: [FileKey: String] = [:]
     @ViewState private var saveTask: Task<Void, Never>?
     @ViewState private var arrived = false
+    @ViewState private var summarising = false
+    @ViewState private var summaryError = ""
 
     private var path: String { node.path }
 
@@ -309,11 +311,41 @@ struct MeetingView: View {
                 }
             }
             .padding(.bottom, 24)
-            if summary.trimmed.isEmpty {
+            if summary.trimmed.isEmpty && !(files[.transcript] ?? "").trimmed.isEmpty {
+                summaryLater
+            } else if summary.trimmed.isEmpty {
                 Text("No summary for this meeting.").foregroundStyle(.secondary)
             } else {
                 MarkdownView(markdown: summary)
             }
+        }
+    }
+
+    /// A meeting saved while the summary model couldn't be reached: its summary can be written now.
+    private var summaryLater: some View {
+        Notice(tone: summaryError.isEmpty ? .grey : .red) {
+            Text("No summary yet").fontWeight(.semibold)
+            Text(summaryError.isEmpty
+                 ? "The transcript and your notes are saved. Oatcake can write the summary and to-dos from them now."
+                 : "Couldn’t write it: \(summaryError)")
+            HStack(spacing: 8) {
+                Button(summarising ? "Writing the summary…" : "Write summary") {
+                    summarising = true
+                    summaryError = ""
+                    Task {
+                        do {
+                            try await model.writeSummary(path)
+                            load()
+                        } catch {
+                            summaryError = error.localizedDescription
+                        }
+                        summarising = false
+                    }
+                }
+                .disabled(summarising)
+                if summarising { ProgressView().controlSize(.small) }
+            }
+            .padding(.top, 6)
         }
     }
 

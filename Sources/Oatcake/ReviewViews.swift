@@ -378,7 +378,8 @@ struct ReviewView: View {
         Task {
             do {
                 let folder = rec.folder ?? ""
-                let path = try await model.saveRecording(rec, decisions: decisions, folder: folder)
+                let saved = try await model.saveRecording(rec, decisions: decisions, folder: folder)
+                let path = saved.path
                 player.stop()
                 model.refresh()
                 model.folder = parentOf(path)
@@ -387,7 +388,8 @@ struct ReviewView: View {
                     try? await Task.sleep(for: .milliseconds(50))
                 }
                 model.openMeeting(path)
-                model.toast("Saved to \(folderPath(folder))")
+                model.toast(saved.summaryError == nil ? "Saved to \(folderPath(folder))"
+                            : "Saved to \(folderPath(folder)), without a summary for now")
             } catch {
                 self.error = error.localizedDescription
                 saving = false

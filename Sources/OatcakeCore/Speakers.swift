@@ -101,6 +101,8 @@ public func knownPeople() -> [String] {
 }
 
 func addVoiceprints(_ entries: [(name: String, embedding: [Float])], call: String) throws {
+    // Nothing new: leave the file as it is (an Electron-era file keeps its old fingerprints on disk).
+    guard !entries.isEmpty else { return }
     var prints = Voiceprints.load()
     for entry in entries {
         var person = prints.people[entry.name] ?? Voiceprints.Person(samples: [])

@@ -20,13 +20,21 @@ public func loadAnalysis(_ rec: Recording) throws -> Analysis {
     try readJSON(Analysis.self, rec.dir.appendingPathComponent("analysis.json"))
 }
 
+public struct SavedMeeting: Sendable {
+    /// The meeting's folder, relative to the Meetings folder.
+    public var path: String
+    /// Why the summary couldn't be written (the meeting was saved without one), if it couldn't.
+    public var summaryError: String?
+}
+
 /**
  * Writes the meeting folder (summary.md, transcript.md, notes.md, todo.md, meeting.json) into
- * `folder` (relative to the Meetings folder), saves confirmed voiceprints, and returns the meeting's
- * path relative to the Meetings folder.
+ * `folder` (relative to the Meetings folder) and saves confirmed voiceprints. When the summary model
+ * can't be reached, everything else is still saved, and the meeting offers to write its summary
+ * later (writeSummary), so nothing from the call waits on the model.
  */
 public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: Decision], folder: String,
-                        onStep: (String) -> Void) async throws -> String {
+                        onStep: (String) -> Void) async throws -> SavedMeeting {
     let analysis = try loadAnalysis(rec)
     let notes = Recordings.loadNotes(rec.id)
 
@@ -65,7 +73,12 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
     let transcript = paragraphs.map { "**[\(clock($0.start))] \($0.speaker):** \($0.text)" }.joined(separator: "\n\n") + "\n"
 
     onStep("Writing the summary")
-    let (summary, todo) = try await summarise(config, title: analysis.title, participants: participants, notes: notes, transcript: transcript)
+    var summary = "", todo = "", summaryError: String?
+    do {
+        (summary, todo) = try await summarise(config, title: analysis.title, participants: participants, notes: notes, transcript: transcript)
+    } catch {
+        summaryError = error.localizedDescription
+    }
 
     let startedAt = parseISO(analysis.startedAt) ?? rec.startedAt
     let name = meetingFolderName(title: analysis.title, startedAt: startedAt)
@@ -73,7 +86,7 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
     let out = try resolveInside(config.meetingsRoot, outRel)
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     try transcript.write(to: out.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
-    try summary.write(to: out.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+    if summaryError == nil { try summary.write(to: out.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8) }
     if !todo.isEmpty { try todo.write(to: out.appendingPathComponent("todo.md"), atomically: true, encoding: .utf8) }
     if !notes.isEmpty { try notesMarkdown(notes).write(to: out.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8) }
     struct Meta: Encodable {
@@ -99,7 +112,27 @@ public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: 
 
     try writeAtomic(rec.dir.appendingPathComponent("saved.json"), try encodeJSON(["meeting": outRel]) + "\n")
     if !config.keepAudio { Recordings.deleteAudio(rec) }
-    return outRel
+    return SavedMeeting(path: outRel, summaryError: summaryError)
+}
+
+/**
+ * Writes the summary and to-dos of a meeting saved without them (the model couldn't be reached), from
+ * its transcript, your notes and meeting.json. To-dos already in todo.md are kept.
+ */
+public func writeSummary(_ config: Config, meeting rel: String) async throws {
+    let meetings = Meetings(root: config.meetingsRoot)
+    let files = try meetings.read(rel)
+    guard !files.transcript.trimmed.isEmpty else { throw OatcakeError("This meeting has no transcript to summarise.") }
+    let notes = parseNotes(files.notes).map { Note(at: $0.stamp.map(seconds), text: $0.text) }
+    let name = (rel as NSString).lastPathComponent
+    let title = files.meta.title ?? name.replacingOccurrences(of: #"^\d{4}-\d{2}-\d{2} \d{4} "#, with: "", options: .regularExpression)
+    let (summary, todo) = try await summarise(config, title: title, participants: files.meta.participants ?? [config.myName],
+                                              notes: notes, transcript: files.transcript)
+    try meetings.write(rel, .summary, summary)
+    if !todo.isEmpty {
+        let existing = files.todo.replacingOccurrences(of: #"\s*$"#, with: "", options: .regularExpression)
+        try meetings.write(rel, .todo, existing.isEmpty ? todo : existing + "\n" + todo)
+    }
 }
 
 private func mergeRuns(_ lines: [Line]) -> [Line] {
