@@ -38,6 +38,7 @@ struct MeetingView: View {
     @ViewState private var finding = false
     @ViewState private var query = ""
     @ViewState private var match = 0
+    @ViewState private var copied = false
     @FocusState private var findFocused: Bool
 
     private var path: String { node.path }
@@ -175,8 +176,37 @@ struct MeetingView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .controlSize(.small)
+            let what = tab == .summary ? "summary and to-dos" : tab == .transcript ? "transcript" : "notes"
+            Button { copy() } label: { Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                .help("Copy the \(what) as Markdown")
+            ShareLink(item: shareText, subject: Text(meetingTitle(node))) { Label("Share", systemImage: "square.and.arrow.up") }
+                .help("Send the \(what) with Mail, Messages or another app")
             Button { model.reveal(path) } label: { Label("Show in Finder", systemImage: "arrow.up.forward.square") }
                 .help("Show this meeting’s folder in Finder")
+        }
+    }
+
+    /// What Copy and Share take: the tab you're on, as Markdown under the meeting's title and date.
+    private var shareText: String {
+        let part = { (key: FileKey) in forReading(files?[key] ?? "").trimmed }
+        var parts = ["# \(meetingTitle(node))", metaLine]
+        switch tab {
+        case .summary:
+            if !part(.todos).isEmpty { parts.append("## To-dos\n\n\(part(.todos))") }
+            parts.append(part(.summary))
+        case .transcript: parts.append(part(.transcript))
+        case .notes: parts.append(part(.notes))
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: "\n\n") + "\n"
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(shareText, forType: .string)
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
         }
     }
 

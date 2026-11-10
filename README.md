@@ -57,8 +57,9 @@ never audio.
 The window has three columns: the sidebar (a recording in progress, Upcoming from your
 calendar, Needs review, and your folders), the meetings in the selected folder, and the
 meeting itself. Settings (⌘,) is its own window, in panes; changes apply as you make them.
-⌘N starts a new recording, ⌥⌘F searches every meeting's title, folder and summary from the box
-above the meeting list, and ⌘F finds words in the transcript you're reading.
+⌘N starts a new recording, ⌥⌘F searches every meeting from the box above the meeting list (its
+title, folder, summary, to-dos, notes and transcript; a meeting found by its text shows the line
+with the words and opens there), and ⌘F finds words in the transcript you're reading.
 
 1. **Record.** New recording, or click an event under Upcoming. Pick the folder (a calendar
    event picks the folder named like it, or offers a new one for a recurring event); leave
@@ -123,7 +124,9 @@ above the meeting list, and ⌘F finds words in the transcript you're reading.
    broken at a pause about every half minute, each part with its own time.
    Tabs: Summary (with the meeting's to-dos at the top), Transcript and My notes (⌘1–⌘3),
    each Rendered or as editable Markdown (saved as you type; Summary shows `todo.md` and
-   `summary.md`). Tick to-dos off in place; a to-do's time jumps to that moment in the
+   `summary.md`). **Copy** puts the tab you're on (the summary with its to-dos, the transcript,
+   or your notes) on the clipboard as Markdown under the meeting's title and date, and **Share**
+   sends the same text with Mail, Messages or another app. Tick to-dos off in place; a to-do's time jumps to that moment in the
    transcript. **To-dos** at the top of the sidebar gathers every meeting's to-dos (open
    and overdue counts beside it): Open / Done / All, grouped by due date, folder or owner,
    filtered by owner ("Mine" is your name from Settings). Ticking one there updates that

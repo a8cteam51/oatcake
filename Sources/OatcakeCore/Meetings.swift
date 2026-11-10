@@ -58,6 +58,17 @@ public struct MeetingFiles: Equatable, Sendable {
     public var meta: MeetingMeta
 }
 
+/// A meeting that a search found.
+public struct SearchHit: Equatable, Sendable {
+    public var path: String
+    /// The file the line below is from. nil when every word is in the meeting's title or folder.
+    public var file: MeetingFile?
+    /// The first line with one of the words, as plain text, cut to start near the word.
+    public var line = ""
+    /// That line's time in the transcript ("12:34"), when it has one.
+    public var stamp: String?
+}
+
 public enum MeetingFile: String, CaseIterable, Sendable {
     case summary = "summary.md", transcript = "transcript.md", notes = "notes.md", todo = "todo.md"
 }
@@ -67,6 +78,8 @@ public final class Meetings: @unchecked Sendable {
     private let lock = NSLock()
     /// Previews are re-read only when summary.md changes, since the tree is rebuilt on every edit.
     private var previews: [String: (Date, String)] = [:]
+    /// Each file's text for search, as written and with case and accents folded away. Kept the same way.
+    private var texts: [String: (modified: Date, text: String, folded: String)] = [:]
 
     public init(root: URL) { self.root = root }
 
@@ -113,6 +126,50 @@ public final class Meetings: @unchecked Sendable {
                             notes: readText(dir.appendingPathComponent("notes.md")),
                             todo: readText(dir.appendingPathComponent("todo.md")),
                             meta: tryJSON(MeetingMeta.self, dir.appendingPathComponent("meeting.json")) ?? MeetingMeta())
+    }
+
+    private func searchable(_ file: URL) -> (text: String, folded: String) {
+        guard let modified = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date else { return ("", "") }
+        if let cached = lock.withLock({ texts[file.path] }), cached.modified == modified { return (cached.text, cached.folded) }
+        let text = readText(file)
+        let folded = foldedForSearch(text)
+        lock.withLock { texts[file.path] = (modified, text, folded) }
+        return (text, folded)
+    }
+
+    /**
+     * The meetings that have every word of `query`, in the order given. A word can be in a meeting's
+     * `label` (what the list shows for it: its title and folder) or anywhere in its summary, to-dos,
+     * notes or transcript. Case and accents don't matter. A hit carries the first line with a word that
+     * the label doesn't have, so the list can show why the meeting was found.
+     */
+    public func search(_ query: String, in meetings: [(path: String, label: String)]) -> [SearchHit] {
+        let words = foldedForSearch(query).split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return [] }
+        let order: [MeetingFile] = [.summary, .todo, .notes, .transcript]
+        return meetings.compactMap { meeting in
+            guard let dir = try? resolveInside(root, meeting.path) else { return nil }
+            let label = foldedForSearch(meeting.label)
+            let files = order.map { ($0, searchable(dir.appendingPathComponent($0.rawValue))) }
+            guard words.allSatisfy({ w in label.contains(w) || files.contains { $0.1.folded.contains(w) } }) else { return nil }
+            let wanted = words.filter { !label.contains($0) }
+            guard !wanted.isEmpty else { return SearchHit(path: meeting.path) }
+            for (file, content) in files where wanted.contains(where: { content.folded.contains($0) }) {
+                for raw in content.text.components(separatedBy: "\n") {
+                    let folded = foldedForSearch(raw)
+                    guard let word = wanted.first(where: { folded.contains($0) }) else { continue }
+                    let plain = plainLine(raw)
+                    guard file == .transcript else { return SearchHit(path: meeting.path, file: file, line: excerpt(plain, around: word)) }
+                    // A transcript line keeps who said it, however far into it the word is.
+                    var line = excerpt(plain, around: word)
+                    if let said = firstMatch(transcriptSpeaker, plain), let whole = said[0], let speaker = said[1] {
+                        line = "\(speaker): \(excerpt(String(plain.dropFirst(whole.count)), around: word))"
+                    }
+                    return SearchHit(path: meeting.path, file: file, line: line, stamp: firstMatch(transcriptStamp, raw)?[1] ?? nil)
+                }
+            }
+            return SearchHit(path: meeting.path)
+        }
     }
 
     /// Saves an edit made in the app. Only the meeting's Markdown files can be written.
@@ -303,14 +360,49 @@ public func previewOf(_ summary: String) -> String {
     for raw in stripHeader(summary).components(separatedBy: "\n") {
         let line = raw.trimmed
         if line.isEmpty || line.hasPrefix("#") || line.range(of: #"^-{3,}$"#, options: .regularExpression) != nil { continue }
-        return line
-            .replacingOccurrences(of: #"^[-*]\s+(\[[ xX]\]\s+)?"#, with: "", options: .regularExpression)
-            // Granola escapes Markdown characters ("Updates \& Welcomes").
-            .replacingOccurrences(of: #"\\([\\`*_{}\[\]()#+\-.!~&<>|])"#, with: "$1", options: .regularExpression)
-            .replacingOccurrences(of: #"\[([^\]]+)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-            .replacingOccurrences(of: #"\s*\[\d{1,2}:\d\d(?::\d\d)?\]"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: "[*_`]", with: "", options: .regularExpression)
-            .trimmed
+        return plainLine(line)
     }
     return ""
+}
+
+/// One line of a meeting's Markdown as plain text, for the meeting list: no heading or list marker,
+/// emphasis, link address or [mm:ss] time.
+func plainLine(_ line: String) -> String {
+    line.trimmed
+        .replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+        .replacingOccurrences(of: #"^[-*]\s+(\[[ xX]\]\s+)?"#, with: "", options: .regularExpression)
+        // Granola escapes Markdown characters ("Updates \& Welcomes").
+        .replacingOccurrences(of: #"\\([\\`*_{}\[\]()#+\-.!~&<>|])"#, with: "$1", options: .regularExpression)
+        .replacingOccurrences(of: #"\[([^\]]+)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+        .replacingOccurrences(of: #"\s*\[\d{1,2}:\d\d(?::\d\d)?\]"#, with: "", options: .regularExpression)
+        // A to-do that ended with its time ("… — Alex — [12:34]") is left with the dash before it.
+        .replacingOccurrences(of: #"\s+[—–-]\s*$"#, with: "", options: .regularExpression)
+        .replacingOccurrences(of: "[*_`]", with: "", options: .regularExpression)
+        .trimmed
+}
+
+/// Text with case and accents folded away, so a search for "cafe" finds "Café".
+func foldedForSearch(_ text: String) -> String {
+    text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+}
+
+/// The time a transcript line starts with: "**[12:34] Alex:** …".
+private let transcriptStamp = try! NSRegularExpression(pattern: #"^\**\[(\d{1,2}:\d\d(?::\d\d)?)\]"#)
+
+/// Who is speaking in a transcript line once it's plain text: "Alex Rivers: …".
+private let transcriptSpeaker = try! NSRegularExpression(pattern: #"^([^:]{1,60}):\s+"#)
+
+/// A long line cut to start a few words before `word` (already folded), so the word shows in the two
+/// lines the meeting list has room for.
+func excerpt(_ line: String, around word: String) -> String {
+    let lead = 40
+    let folded = foldedForSearch(line)
+    guard let found = folded.range(of: word) else { return line }
+    // Folding can change a line's length by a character or two; this only decides where the excerpt starts.
+    let offset = folded.distance(from: folded.startIndex, to: found.lowerBound)
+    guard offset > lead, offset < line.count else { return line }
+    // Start at a word, not in the middle of one.
+    let from = line.index(line.startIndex, offsetBy: offset - lead)
+    let start = line[from...].firstIndex(of: " ").map { line.index(after: $0) } ?? from
+    return "…" + line[start...]
 }

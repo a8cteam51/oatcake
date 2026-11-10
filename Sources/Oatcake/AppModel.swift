@@ -229,9 +229,9 @@ final class AppModel {
 
     /// Opens a meeting picked in the middle column, which stays as it is (all meetings, a folder, or
     /// search results) rather than switching to the meeting's own folder.
-    func selectMeeting(_ path: String) {
+    func selectMeeting(_ path: String, jump: Jump? = nil) {
         guard tree?.find(path)?.kind == .meeting else { return }
-        selection = .meeting(path)
+        selection = .meeting(path, jump: jump)
         UserDefaults.standard.set(path, forKey: "lastMeeting")
     }
 

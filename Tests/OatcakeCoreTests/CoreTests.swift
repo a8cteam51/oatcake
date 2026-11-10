@@ -159,6 +159,45 @@ private func fixture(_ name: String) throws -> URL {
         #expect(kept?["recording"] == "r1" && kept?["granolaNote"] == "https://notes.granola.ai/d/x")
         #expect(throws: OatcakeError.self) { try meetings.retitle(renamed, to: "  ") }
     }
+
+    @Test func searchesEveryMeetingsText() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-search-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        func write(_ rel: String, _ file: MeetingFile, _ text: String) throws {
+            let dir = root.appendingPathComponent(rel)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try "{}".write(to: dir.appendingPathComponent("meeting.json"), atomically: true, encoding: .utf8)
+            try text.write(to: dir.appendingPathComponent(file.rawValue), atomically: true, encoding: .utf8)
+        }
+        let sync = "Team/2026-11-09 1000 Weekly sync", review = "Design/2026-11-06 1400 Design review"
+        try write(sync, .summary, "## Launch plan\n\nAlex said the checklist is nearly done.\n")
+        try write(sync, .transcript, "**[00:00] Sam:** Morning.\n\n**[12:34] Alex:** For the offsite in March I think that we could all meet up at the Café Lumière, if the budget allows.\n")
+        try write(review, .notes, "- [02:10] Ask about the colour tokens\n")
+        try write(review, .todo, "- [ ] Send the deck — Alex — [04:20]\n")
+        let meetings = Meetings(root: root)
+        let all = [(path: sync, label: "Weekly sync Team"), (path: review, label: "Design review Design")]
+
+        // In a transcript, whatever the case or accents: the line, starting near the words, and its time.
+        let cafe = meetings.search("cafe LUMIERE", in: all)
+        #expect(cafe.map(\.path) == [sync])
+        #expect(cafe.first?.file == .transcript && cafe.first?.stamp == "12:34")
+        #expect(cafe.first?.line.hasPrefix("Alex: …") == true && cafe.first?.line.contains("meet up at the Café Lumière") == true)
+        // A search for someone's name finds where they speak.
+        #expect(meetings.search("sam", in: all).first == SearchHit(path: sync, file: .transcript, line: "Sam: Morning.", stamp: "00:00"))
+        // Notes and to-dos are looked through as well, and a line is shown as plain text.
+        #expect(meetings.search("tokens", in: all).first?.file == .notes)
+        #expect(meetings.search("deck", in: all).first == SearchHit(path: review, file: .todo, line: "Send the deck — Alex"))
+        // Words can be split between the title and the text, and every one of them is needed.
+        #expect(meetings.search("weekly checklist", in: all).first == SearchHit(path: sync, file: .summary, line: "Alex said the checklist is nearly done."))
+        #expect(meetings.search("weekly deck", in: all).isEmpty)
+        // All in the title or folder: found, with no line to show.
+        #expect(meetings.search("design review", in: all) == [SearchHit(path: review)])
+        #expect(meetings.search("   ", in: all).isEmpty)
+        // A file that changes is read again.
+        try write(sync, .summary, "## Hiring\n\nThe zebra budget was agreed.\n")
+        #expect(meetings.search("zebra", in: all).first?.line == "The zebra budget was agreed.")
+        #expect(meetings.search("checklist", in: all).isEmpty)
+    }
 }
 
 @Suite struct AnalysisTests {

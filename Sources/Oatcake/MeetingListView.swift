@@ -13,13 +13,16 @@ struct MeetingListView: View {
     @ViewState private var renaming: TreeNode?
     @ViewState private var draft = ""
     @ViewState private var query = ""
+    /// What the last search of every meeting's text found, and the words it was for.
+    @ViewState private var found: (query: String, hits: [SearchHit])?
     @FocusState private var searching: Bool
 
     var body: some View {
         // The top level lists every meeting, each labelled with the folder it's in; so does a search.
         let search = query.trimmed
         let everything = !search.isEmpty || (folder?.path.isEmpty ?? true)
-        let rows = search.isEmpty ? listedIn(folder) : found(search)
+        let hits = search.isEmpty || found?.query != search ? [:] : Dictionary(uniqueKeysWithValues: (found?.hits ?? []).map { ($0.path, $0) })
+        let rows = search.isEmpty ? listedIn(folder) : results(search)
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text(!search.isEmpty ? "Search" : everything ? "All meetings" : baseName(folder!.path)).font(.headline).lineLimit(1)
@@ -49,7 +52,7 @@ struct MeetingListView: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.fill))
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .help("Search titles, folders and summaries (⌥⌘F)")
+            .help("Search every meeting’s title, folder, summary, to-dos, notes and transcript (⌥⌘F)")
             Divider()
             if rows.isEmpty {
                 VStack(spacing: 10) {
@@ -62,14 +65,16 @@ struct MeetingListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Picking a meeting leaves this list as it is, rather than swapping it for the meeting's folder.
-                List(selection: Binding(get: { selectedPath }, set: { if let p = $0 { model.selectMeeting(p) } })) {
-                    ForEach(rows) { row($0, everything: everything, folder: folder?.path ?? "").tag($0.path) }
+                List(selection: Binding(get: { selectedPath }, set: { if let p = $0 { open(p, hit: hits[p]) } })) {
+                    ForEach(rows) { row($0, everything: everything, folder: folder?.path ?? "", hit: hits[$0.path]).tag($0.path) }
                 }
                 .listStyle(.plain)
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onChange(of: model.searchRequest) { searching = true }
+        // Searched again when the words change, and when a meeting does.
+        .task(id: "\(model.diskVersion) \(search)") { await searchText(search) }
         .alert("Rename meeting", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $draft)
             Button("Rename") { if let node = renaming { model.retitle(node.path, to: draft) } }
@@ -84,16 +89,37 @@ struct MeetingListView: View {
         return nil
     }
 
-    /// Every meeting whose title, folder or summary preview has all the words typed, newest first.
-    private func found(_ search: String) -> [TreeNode] {
+    /// What a meeting is listed as, besides its text.
+    private func label(_ m: TreeNode) -> String { "\(meetingTitle(m)) \(folderPath(parentOf(m.path)))" }
+
+    /// The meetings a search lists, newest first: those with all the words typed in their title, folder,
+    /// summary, to-dos, notes or transcript. Until every meeting's text has been looked through (a
+    /// moment after you stop typing), it's the ones with the words in their title or folder.
+    private func results(_ search: String) -> [TreeNode] {
+        if let found, found.query == search { return found.hits.compactMap { root?.find($0.path) } }
         let words = search.split(separator: " ").map(String.init)
-        return listedIn(root).filter { m in
-            let text = "\(meetingTitle(m)) \(folderPath(parentOf(m.path))) \(m.preview)"
-            return words.allSatisfy { text.localizedStandardContains($0) }
-        }
+        return listedIn(root).filter { m in words.allSatisfy { label(m).localizedStandardContains($0) } }
     }
 
-    private func row(_ m: TreeNode, everything: Bool, folder: String) -> some View {
+    /// Looks through every meeting's text, off the main thread. Each file is read once and kept until it changes.
+    private func searchText(_ search: String) async {
+        guard !search.isEmpty else { return found = nil }
+        try? await Task.sleep(for: .milliseconds(150))
+        guard !Task.isCancelled else { return }
+        let all = listedIn(root).map { (path: $0.path, label: label($0)) }
+        let meetings = model.meetings
+        let hits = await Task.detached { meetings.search(search, in: all) }.value
+        if !Task.isCancelled { found = (search, hits) }
+    }
+
+    /// Opens a meeting picked in the list. One that a search found in its text opens where the words are.
+    private func open(_ path: String, hit: SearchHit?) {
+        guard let file = hit?.file else { return model.selectMeeting(path) }
+        let tab: MeetingTab = file == .transcript ? .transcript : file == .notes ? .notes : .summary
+        model.selectMeeting(path, jump: Jump(tab: tab, stamp: hit?.stamp))
+    }
+
+    private func row(_ m: TreeNode, everything: Bool, folder: String, hit: SearchHit?) -> some View {
         let date = meetingDate(m)
         let title = meetingTitle(m)
         return VStack(alignment: .leading, spacing: 3) {
@@ -121,7 +147,12 @@ struct MeetingListView: View {
             } else if !sameAsFolder(title, folder) {
                 Text(title).fontWeight(.medium).lineLimit(1)
             }
-            if !m.preview.isEmpty {
+            if let hit, let file = hit.file, !hit.line.isEmpty {
+                // Found in the meeting's text: the line that has the words, and where it is.
+                let place = [MeetingFile.summary: "Summary", .todo: "To-dos", .notes: "My notes", .transcript: "Transcript"][file] ?? ""
+                (Text("\(place) · ").fontWeight(.medium) + Text(hit.line))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            } else if !m.preview.isEmpty {
                 Text(m.preview).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
         }
