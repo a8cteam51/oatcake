@@ -55,6 +55,8 @@ struct LiveLine: Identifiable, Equatable {
 struct ReviewDraft: Equatable {
     struct Voice: Equatable {
         var name: String
+        /// The name was picked from the calendar invite.
+        var fromInvite = false
         var mixed = false
         /// Merged into another voice (`me` for your microphone).
         var into: String?
@@ -455,7 +457,7 @@ final class AppModel {
         if active.isEmpty {
             do {
                 let folder = try meetings.folderForEvent(title: event.title, recurring: event.seriesId != nil)
-                try startRecording(title: event.title, folder: folder, options: .init(eventId: event.id))
+                try startRecording(title: event.title, folder: folder, options: startOptions(event))
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "Couldn't start recording"
@@ -488,6 +490,17 @@ final class AppModel {
     func newRecording(_ event: CalendarEvent? = nil) {
         showWindow()
         selection = live != nil ? .live : .new(event)
+    }
+
+    /// A recording started straight from a calendar event carries the event and who else is invited.
+    private func startOptions(_ event: CalendarEvent) -> Recordings.StartOptions {
+        .init(eventId: event.id, attendees: otherAttendees(event, myName: config.myName).map(attendeeName))
+    }
+
+    /// The link to the call being recorded, when it was started from a calendar event that has one.
+    var liveCallLink: URL? {
+        guard let id = live?.eventId, let link = calendar?.events.first(where: { $0.id == id })?.callLink else { return nil }
+        return URL(string: link)
     }
 
     func startRecording(title: String, folder: String, options: Recordings.StartOptions) throws {
@@ -667,7 +680,7 @@ final class AppModel {
         do {
             if let event = currentEvent {
                 let folder = try meetings.folderForEvent(title: event.title, recurring: event.seriesId != nil)
-                try startRecording(title: event.title, folder: folder, options: .init(eventId: event.id))
+                try startRecording(title: event.title, folder: folder, options: startOptions(event))
             } else {
                 try startRecording(title: "Call", folder: "", options: .init())
             }

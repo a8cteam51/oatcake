@@ -4,13 +4,6 @@ import SwiftUI
 private let topLevel = "\u{0}top"
 private let newFolder = "\u{0}new"
 
-/// "Alex Kim" from an attendee, or from "alex.kim@…" when the invite has no name.
-private func attendeeName(_ a: CalendarEvent.Attendee) -> String {
-    if let name = a.name, !name.isEmpty { return name }
-    return (a.email.split(separator: "@").first.map(String.init) ?? a.email)
-        .split(whereSeparator: { "._-".contains($0) }).map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
-}
-
 private func eventWhen(_ e: CalendarEvent) -> String {
     let cal = Calendar.current
     let day = cal.isDateInToday(e.startDate) ? "Today" : cal.isDateInTomorrow(e.startDate) ? "Tomorrow" : weekday(e.startDate)
@@ -166,11 +159,7 @@ struct NewRecordingView: View {
     }
 
     /// Everyone invited except you.
-    private func others(_ event: CalendarEvent) -> [CalendarEvent.Attendee] {
-        let me = model.config.myName.lowercased()
-        let first = me.split(separator: " ").first.map(String.init) ?? me
-        return event.attendees.filter { let n = attendeeName($0).lowercased(); return n != me && n != first }
-    }
+    private func others(_ event: CalendarEvent) -> [CalendarEvent.Attendee] { otherAttendees(event, myName: model.config.myName) }
 
     // MARK: Open to-dos from last time
 
@@ -269,7 +258,8 @@ struct NewRecordingView: View {
             }
             let notes = prepDraft.trimmed.isEmpty ? prep : prep + [prepDraft.trimmed]
             let name = title.trimmed.isEmpty ? (folderName.isEmpty ? "Untitled meeting" : folderName) : title.trimmed
-            try model.startRecording(title: name, folder: target, options: .init(eventId: event?.id, prep: notes))
+            try model.startRecording(title: name, folder: target,
+                                     options: .init(eventId: event?.id, prep: notes, attendees: event.map { others($0).map(attendeeName) } ?? []))
         } catch {
             self.error = error.localizedDescription
             starting = false

@@ -23,6 +23,12 @@ struct LiveView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(pathAbove(rec.folder ?? "", rec.title)).foregroundStyle(.secondary)
                     PageTitle(text: rec.title).padding(.top, 4)
+                    // Recording often starts before joining: the event's call link stays to hand.
+                    if let link = model.liveCallLink {
+                        Button { NSWorkspace.shared.open(link) } label: { Label("Join the call", systemImage: "video") }
+                            .help("Opens \(callApp(link.absoluteString) ?? "the call")")
+                            .padding(.top, 10)
+                    }
                     notices
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(lines) { line in noteRow(line) }

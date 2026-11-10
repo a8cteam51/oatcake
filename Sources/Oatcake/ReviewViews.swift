@@ -190,6 +190,12 @@ struct ReviewView: View {
         return v.mixed ? "Several people" : v.name.trimmed.isEmpty ? label(analysis, id) : v.name.trimmed
     }
 
+    /// People on the call's calendar invite who haven't been given a voice yet, as quick picks.
+    private var invited: [String] {
+        let used = Set(voices.values.map { $0.name.trimmed.lowercased() })
+        return (rec.attendees ?? []).filter { !used.contains($0.lowercased()) }
+    }
+
     /// Everyone named here, you first and then by talking time: the order their colours are given in.
     private func names(_ analysis: Analysis) -> [String] {
         [myName] + analysis.speakers.map { nameOf(analysis, $0.id) }
@@ -318,14 +324,30 @@ struct ReviewView: View {
             clips(s.quotes)
             if !v.mixed {
                 VStack(alignment: .leading, spacing: 6) {
-                    TextField("Who is this?", text: Binding(get: { voices[s.id]?.name ?? "" }, set: { voices[s.id]?.name = $0 }))
+                    TextField("Who is this?", text: Binding(get: { voices[s.id]?.name ?? "" }, set: {
+                        if $0 != voices[s.id]?.name { voices[s.id]?.fromInvite = false }
+                        voices[s.id]?.name = $0
+                    }))
                         .textFieldStyle(.roundedBorder)
                         .textInputSuggestions {
-                            ForEach(people.filter { p in let typed = v.name.trimmed.lowercased(); return !typed.isEmpty && p.lowercased().contains(typed) && p != v.name }, id: \.self) {
+                            ForEach((people + (rec.attendees ?? []).filter { !people.contains($0) }).filter { p in let typed = v.name.trimmed.lowercased(); return !typed.isEmpty && p.lowercased().contains(typed) && p != v.name }, id: \.self) {
                                 Text($0).textInputCompletion($0)
                             }
                         }
-                    if fromSuggestion, let suggestion = s.suggestion {
+                    // The people on the calendar invite not yet given a voice: one click names this one.
+                    if !invited.isEmpty {
+                        FlowLayout(spacing: 6) {
+                            Text("On the invite:").font(.callout).foregroundStyle(.secondary)
+                            ForEach(invited.prefix(8), id: \.self) { name in
+                                Button(name) { voices[s.id] = Voice(name: name, fromInvite: true) }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                    .help("Name this voice \(name)")
+                            }
+                        }
+                    }
+                    if v.fromInvite && !v.name.trimmed.isEmpty {
+                        Label("From the calendar invite", systemImage: "calendar").font(.callout).foregroundStyle(.secondary)
+                    } else if fromSuggestion, let suggestion = s.suggestion {
                         Label {
                             Text(suggestion.how == .voice ? "Recognised from before"
                                  : "Guessed from the conversation\(suggestion.detail.isEmpty ? "" : " · “\(suggestion.detail.trimmingCharacters(in: CharacterSet(charactersIn: "\"“”")))”")")

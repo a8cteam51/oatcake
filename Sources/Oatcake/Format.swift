@@ -77,6 +77,20 @@ func listedIn(_ folder: TreeNode?) -> [TreeNode] {
 
 // MARK: - People
 
+/// "Alex Kim" from an attendee, or from "alex.kim@…" when the invite has no name.
+func attendeeName(_ a: CalendarEvent.Attendee) -> String {
+    if let name = a.name, !name.isEmpty { return name }
+    return (a.email.split(separator: "@").first.map(String.init) ?? a.email)
+        .split(whereSeparator: { "._-".contains($0) }).map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+}
+
+/// Everyone invited to an event except you.
+func otherAttendees(_ event: CalendarEvent, myName: String) -> [CalendarEvent.Attendee] {
+    let me = myName.lowercased()
+    let first = me.split(separator: " ").first.map(String.init) ?? me
+    return event.attendees.filter { let n = attendeeName($0).lowercased(); return n != me && n != first }
+}
+
 /// Labels that aren't a person: their avatars are grey.
 private let notAPerson = #"^(Voice \d+|Several people|Microphone|System audio|Call audio|Unknown)$"#
 private let hues: [Double] = [265, 25, 160, 330, 200, 60, 295, 130, 230, 0, 95, 180]

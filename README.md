@@ -93,7 +93,8 @@ above the meeting list, and ⌘F finds words in the transcript you're reading.
    switches in Settings › General.
 
    While a call is being recorded the **menu bar** shows its running time, with Stop in its
-   menu.
+   menu. A recording started from a calendar event keeps the event's **Join the call** button on
+   its screen, for when you press record before joining.
 2. **Process (on this Mac, in the background).** Parakeet transcribes both tracks. The call
    audio is split into voices by FluidAudio's batch diariser (pyannote segmentation, WeSpeaker
    fingerprints, VBx clustering). It runs as a helper process (`Oatcake --analyse`), so a
@@ -103,7 +104,8 @@ above the meeting list, and ⌘F finds words in the transcript you're reading.
    recording waits under Needs review with its step (1–5); a failure shows the reason, with
    Try again and Discard.
 3. **Review (Who's who).** Change the title or the folder it's saved in if you want to. One card
-   per voice: play its clips, confirm or type the name
+   per voice: play its clips, confirm or type the name, or pick one of the people on the call's
+   calendar invite (each is offered until they've been given a voice)
    (with where the suggestion came from), merge it into another voice or into you, or mark
    it as mixed ("Several people"). Unnamed voices are saved as "Voice 1", "Voice 2"… The
    transcript beside it updates as you name voices. Confirmed voices with 30+ seconds of
@@ -336,8 +338,8 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   with none; "Join the call" opens its Meet, Zoom or Teams link (only links on those services'
   own domains count, so a look-alike address is never opened). A failed
   fetch keeps the last events and turns ↻ red; hover it for the reason.
-- **Show my next call in the menu bar** (on by default, with a calendar connected): the time
-  until it starts, and what's coming up in its menu (click one to record it). With this on,
+- **Show my next call in the menu bar** (on by default, with a calendar connected): Oatcake's
+  oatcake with the time until it starts, and what's coming up in its menu (click one to record it). With this on,
   closing Oatcake's window leaves it running in the menu bar, so reminders and call notices keep
   working; its menu reopens the window or quits.
 - **Remind me before calls** (on by default): 5 minutes before each timed event, a notification

@@ -45,17 +45,19 @@ final class MenuBarItem: NSObject, NSMenuDelegate {
             let now = Date()
             let label = nextCallLabel(events, now: now)
             let next = events.first { $0.startDate > now } ?? events.first
-            (symbol, title, tip) = ("calendar", label.isEmpty ? "" : " " + label,
+            (symbol, title, tip) = ("oatcake", label.isEmpty ? "" : " " + label,
                                     next.map { "\($0.title) · \(hhmm($0.startDate))–\(hhmm($0.endDate))" } ?? "Nothing coming up on your calendar")
         }
         // Set only on a change: this runs twice a second during a recording.
         if button.title != title { button.title = title }
         if button.toolTip != tip { button.toolTip = tip }
         if self.symbol != symbol {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: red ? "Recording" : "Next call")?
-                .withSymbolConfiguration(red ? .init(paletteColors: [.systemRed]) : .init(pointSize: 0, weight: .regular))
-            image?.isTemplate = !red
-            button.image = image
+            // Recording: a red dot. Otherwise Oatcake's own oatcake, beside the time until the next call.
+            let recordingDot = NSImage(systemSymbolName: symbol, accessibilityDescription: "Recording")?
+                .withSymbolConfiguration(.init(paletteColors: [.systemRed]))
+            recordingDot?.isTemplate = false
+            button.image = red ? recordingDot : oatcakeGlyph
+            button.setAccessibilityLabel(red ? "Oatcake, recording" : "Oatcake, next call")
             self.symbol = symbol
         }
     }
@@ -108,6 +110,40 @@ final class MenuBarItem: NSObject, NSMenuDelegate {
     }
     @objc private func quit() { NSApp.terminate(nil) }
 }
+
+/// The oatcake from Oatcake's icon, for the menu bar: its outline filled, with the waveform cut out of
+/// it. A template image, so macOS draws it light or dark to suit the menu bar. The icon's eleven
+/// bars are too fine at this size, so it has five of them, in the same rise and fall.
+let oatcakeGlyph: NSImage = {
+    // The icon's outline, every other point, around (0, 0) with a radius of 1.
+    let outline = "0.995,0.001 0.958,0.101 0.976,0.208 0.929,0.303 0.899,0.402 0.856,0.496 0.797,0.581 0.729,0.659 0.662,0.739 0.574,0.794 0.491,0.856 0.405,0.916 0.299,0.928 0.207,0.985 0.099,0.969 -0.003,0.998 -0.106,0.982 -0.209,0.971 -0.307,0.938 -0.408,0.910 -0.494,0.852 -0.584,0.801 -0.669,0.741 -0.733,0.658 -0.811,0.588 -0.844,0.486 -0.913,0.406 -0.941,0.306 -0.965,0.205 -0.985,0.104 -0.992,0.001 -0.985,-0.102 -0.970,-0.205 -0.945,-0.305 -0.895,-0.396 -0.871,-0.500 -0.785,-0.568 -0.748,-0.671 -0.660,-0.729 -0.586,-0.802 -0.498,-0.857 -0.404,-0.901 -0.304,-0.927 -0.211,-0.980 -0.106,-0.980 -0.003,-0.986 0.101,-0.988 0.199,-0.946 0.307,-0.952 0.395,-0.893 0.492,-0.856 0.577,-0.797 0.662,-0.738 0.730,-0.659 0.804,-0.585 0.850,-0.492 0.900,-0.401 0.937,-0.305 0.957,-0.203 0.991,-0.104".split(separator: " ").map { pair -> NSPoint in
+        let xy = pair.split(separator: ",").map { Double($0) ?? 0 }
+        return NSPoint(x: xy[0], y: xy[1])
+    }
+    let bars: [CGFloat] = [3.8, 7.5, 9.5, 8.3, 3.1]
+    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
+        let centre = NSPoint(x: rect.midX, y: rect.midY), radius: CGFloat = 8.5
+        let cookie = NSBezierPath()
+        for (i, p) in outline.enumerated() {
+            let point = NSPoint(x: centre.x + p.x * radius, y: centre.y + p.y * radius)
+            if i == 0 { cookie.move(to: point) } else { cookie.line(to: point) }
+        }
+        cookie.close()
+        NSColor.black.setFill()
+        cookie.fill()
+        // The bars are cut out, not drawn.
+        NSGraphicsContext.current?.compositingOperation = .destinationOut
+        let width: CGFloat = 1.7, gap: CGFloat = 1.1
+        var x = centre.x - (CGFloat(bars.count) * width + CGFloat(bars.count - 1) * gap) / 2
+        for height in bars {
+            NSBezierPath(roundedRect: NSRect(x: x, y: centre.y - height / 2, width: width, height: height), xRadius: width / 2, yRadius: width / 2).fill()
+            x += width + gap
+        }
+        return true
+    }
+    image.isTemplate = true
+    return image
+}()
 
 /// "12m", "1h 5m" or "now" for the menu bar: the time until the next call starts. A call that's
 /// under way shows "now" unless the next one is within a quarter of an hour. "" when nothing is

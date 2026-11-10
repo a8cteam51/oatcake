@@ -10,8 +10,9 @@ public struct Recording: Codable, Identifiable, Equatable, Hashable, Sendable {
     public var title: String
     /// Meetings folder (relative path) picked when the recording started; "" is the top level.
     public var folder: String?
-    /// The calendar event it was started from, if any.
+    /// The calendar event it was started from, if any, and who else was invited to it.
     public var eventId: String?
+    public var attendees: [String]?
     public var startedAt: Date
     /// When recording stopped (from the recorder's meta.json).
     public var endedAt: Date?
@@ -63,6 +64,7 @@ struct CallInfo: Codable {
     var folder: String?
     var startedAt: String
     var eventId: String?
+    var attendees: [String]?
 }
 
 /// What the recorder writes to meta.json as it exits.
@@ -104,9 +106,12 @@ public enum Recordings {
         public var eventId: String?
         /// Prep notes written before the call; they open the call's notes.
         public var prep: [String] = []
-        public init(eventId: String? = nil, prep: [String] = []) {
+        /// The other people on the event's invite: offered as names in Who's who.
+        public var attendees: [String] = []
+        public init(eventId: String? = nil, prep: [String] = [], attendees: [String] = []) {
             self.eventId = eventId
             self.prep = prep
+            self.attendees = attendees
         }
     }
 
@@ -119,13 +124,15 @@ public enum Recordings {
         let dir = Paths.recordings.appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try writeAtomic(dir.appendingPathComponent("call.json"),
-                        try encodeJSON(CallInfo(title: title, folder: folder, startedAt: isoString(startedAt), eventId: options.eventId)))
+                        try encodeJSON(CallInfo(title: title, folder: folder, startedAt: isoString(startedAt), eventId: options.eventId,
+                                                attendees: options.attendees.isEmpty ? nil : options.attendees)))
         let prep = options.prep.map(\.trimmed).filter { !$0.isEmpty }
         if !prep.isEmpty { try saveNotes(id, prep.map { Note(at: nil, text: $0) }) }
         try setMic(dir, uid: micUid)
         // Launched through LaunchServices so macOS treats the recorder as its own app for permissions.
         try runCapturing("/usr/bin/open", ["-n", "-g", recorderApp.path, "--args", "--out", dir.path])
-        return Recording(id: id, dir: dir, title: title, folder: folder, eventId: options.eventId, startedAt: startedAt, state: .recording)
+        return Recording(id: id, dir: dir, title: title, folder: folder, eventId: options.eventId,
+                         attendees: options.attendees.isEmpty ? nil : options.attendees, startedAt: startedAt, state: .recording)
     }
 
     public static func status(_ rec: Recording) -> RecorderStatus {
@@ -177,7 +184,7 @@ public enum Recordings {
             let has = { fm.exists(dir.appendingPathComponent($0)) }
             let state: Recording.State = has("saved.json") ? .saved : has("analysis.json") ? .processed : has("meta.json") ? .recorded : .recording
             let endedAt = tryJSON(RecorderMeta.self, dir.appendingPathComponent("meta.json")).flatMap { parseISO($0.endedAt) }
-            return Recording(id: id, dir: dir, title: call.title, folder: call.folder, eventId: call.eventId,
+            return Recording(id: id, dir: dir, title: call.title, folder: call.folder, eventId: call.eventId, attendees: call.attendees,
                              startedAt: parseISO(call.startedAt) ?? Date(), endedAt: endedAt, state: state)
         }
     }
