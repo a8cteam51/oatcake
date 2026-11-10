@@ -199,7 +199,6 @@ None of this is built yet. It's what we'd like to add, in no fixed order.
 **Setting up**
 
 - A notarised download, so macOS opens Oatcake without the warning or the Terminal line.
-- Connecting a Google or Microsoft calendar by signing in, as well as by pasting its address.
 
 ## Install
 
