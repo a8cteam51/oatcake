@@ -160,6 +160,47 @@ Granola's export has no speaker names or timestamps in its transcripts, so they 
 paragraphs, and it has no participants or end times. The import is in
 `Sources/OatcakeCore/Granola.swift`.
 
+## What's next
+
+None of this is built yet. It's what we'd like to add, in no fixed order.
+
+**Notes**
+
+- A summary as soon as a call has been processed, before Who's who, with the names put right
+  once you've confirmed them.
+- Templates for summaries (a one-to-one, a customer call, a stand-up), and writing a summary
+  again with a different one.
+- Asking for a change to a summary: "shorter", "add the numbers we agreed".
+- Your own notes worked into the summary, each point with where it came from in the transcript.
+- A brief before a call: what was agreed and what's still open from the last one with the same
+  people.
+
+**During a call**
+
+- Ask while the call is still going.
+- Names beside the call side of the live transcript.
+- Pause and resume.
+- Meetings in a room: telling apart the voices on your microphone, as the call side is today.
+
+**Finding things**
+
+- Saved questions for Ask, and choosing the folder or person it looks through.
+- Ask with any of the summary providers, not only Claude Code.
+- Times in an Ask answer that jump to that moment in the transcript.
+- A page for each person: the meetings they were in and the to-dos they own.
+- A way for other tools and assistants to read your meetings (an MCP server over the Meetings
+  folder).
+
+**Transcription**
+
+- Jargon given to the speech model too, so the transcript itself spells names as you wrote them.
+- More languages, and calls that move between them.
+
+**Setting up**
+
+- A download that opens without Terminal.
+- Connecting a Google or Microsoft calendar by signing in, as well as by pasting its address.
+
 ## Install
 
 Needs an Apple Silicon Mac on macOS 15 or later (FluidAudio's diariser hits a Core ML bug that
