@@ -1,8 +1,13 @@
 name: Release
 
-# Pushing a version tag builds Oatcake.app and attaches it to a GitHub release:
+# Pushing a version tag builds Oatcake.app, signs it with the release certificate, and publishes it
+# with latest.json, the signed manifest that install.sh and Oatcake's own updater read:
 #   npm version patch && git push --follow-tags
-# Running the workflow by hand (Actions › Release › Run workflow) only checks that it builds.
+# Running the workflow by hand (Actions › Release › Run workflow) builds and signs without releasing.
+#
+# Secrets (README › Releasing):
+#   OATCAKE_SIGNING_P12, OATCAKE_SIGNING_P12_PASSWORD  the "Oatcake Release" code-signing identity
+#   OATCAKE_UPDATE_KEY                                 the Ed25519 key that signs latest.json
 on:
   push:
     tags: ["v*"]
@@ -20,6 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the previous tag, for the release notes
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -34,6 +40,28 @@ jobs:
             exit 1
           fi
 
+      # A throwaway keychain holding only the release identity. It's self-signed and so not trusted,
+      # which codesign accepts; what matters is that every release carries the same one.
+      - name: Import the signing certificate
+        env:
+          P12: ${{ secrets.OATCAKE_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.OATCAKE_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then
+            echo "::error::The OATCAKE_SIGNING_P12 secret is missing, so the app can't be signed for updates."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 16)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          echo "OATCAKE_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
       # No package install scripts run, apart from Electron's own download.
       - name: Install
         run: |
@@ -42,24 +70,68 @@ jobs:
 
       - run: npm run typecheck
 
-      # Builds the Swift recorder, bundles the app and sets Electron's fuses (scripts/package.mjs).
-      - run: npm run package
+      # Builds the Swift recorder, bundles the app, sets Electron's fuses and signs it (scripts/package.mjs).
+      - name: Package
+        env:
+          OATCAKE_SIGN_IDENTITY: Oatcake Release
+          OATCAKE_REQUIRE_SIGNING: "1"
+        run: npm run package
+
+      # Both the app and the recorder must name the certificate, not an ad-hoc hash, or installed
+      # copies couldn't update to this one and macOS would ask for permissions again.
+      - name: Check the signatures
+        run: |
+          app=out/Oatcake-darwin-arm64/Oatcake.app
+          codesign --verify --deep --strict "$app"
+          for bundle in "$app" "$app/Contents/Resources/OatcakeRecorder.app"; do
+            requirement="$(codesign -d -r - "$bundle" 2>/dev/null)"
+            echo "$bundle: $requirement"
+            case "$requirement" in
+              *"certificate leaf"*) ;;
+              *) echo "::error::$bundle isn't signed with the release certificate."; exit 1 ;;
+            esac
+          done
 
       # ditto keeps the symlinks inside Electron's frameworks, which zip would break.
       - name: Zip
         run: |
-          zip="Oatcake-${GITHUB_REF_NAME}-arm64.zip"
+          zip="Oatcake-${GITHUB_REF_NAME//\//-}-arm64.zip" # a branch name's / can't be in a file name
           ditto -c -k --sequesterRsrc --keepParent out/Oatcake-darwin-arm64/Oatcake.app "$zip"
           echo "ZIP=$zip" >> "$GITHUB_ENV"
           ls -lh "$zip"
+
+      # Notes: the commit subjects since the previous tag, without npm version's own commit.
+      - name: Sign latest.json
+        env:
+          OATCAKE_UPDATE_KEY: ${{ secrets.OATCAKE_UPDATE_KEY }}
+        run: |
+          previous="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
+          git log --no-merges --format='- %s' ${previous:+"$previous..HEAD"} | grep -v -E '^- v?[0-9]+\.[0-9]+\.[0-9]+$' > "$RUNNER_TEMP/notes.txt" || true
+          node scripts/sign-manifest.mjs \
+            --app out/Oatcake-darwin-arm64/Oatcake.app \
+            --zip "$ZIP" \
+            --url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ZIP" \
+            --notes "$RUNNER_TEMP/notes.txt" > latest.json
+          cat latest.json
 
       - name: Release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
           NOTES: |
-            For Apple Silicon Macs on macOS 14.2 or later. Unzip, then move Oatcake to Applications.
+            For Apple Silicon Macs on macOS 14.2 or later. To install, paste this into Terminal:
 
-            Oatcake isn't notarised, so macOS blocks the first open: allow it in System Settings › Privacy & Security › Open Anyway. If the recorder still doesn't start, run `xattr -dr com.apple.quarantine /Applications/Oatcake.app` in Terminal. The first recording asks for microphone and system-audio permission for "OatcakeRecorder".
+            ```
+            curl -fsSL https://raw.githubusercontent.com/a8cteam51/oatcake/trunk/install.sh | sh
+            ```
+
+            Installed copies update themselves (Settings › Updates). Oatcake isn't notarised, so a zip downloaded with a browser is blocked by macOS; the install line avoids that. The first recording asks for microphone and system-audio permission for "OatcakeRecorder".
         # --notes goes above the generated list of changes.
-        run: gh release create "$GITHUB_REF_NAME" "$ZIP" --repo "$GITHUB_REPOSITORY" --title "Oatcake $GITHUB_REF_NAME" --generate-notes --notes "$NOTES"
+        run: gh release create "$GITHUB_REF_NAME" "$ZIP" latest.json --repo "$GITHUB_REPOSITORY" --title "Oatcake $GITHUB_REF_NAME" --generate-notes --notes "$NOTES"
+
+      # What install.sh and installed copies will fetch.
+      - name: Check the feed serves this release
+        if: github.ref_type == 'tag'
+        run: |
+          sleep 5
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" | cmp - latest.json

@@ -3,7 +3,7 @@ import { api, type Calendar, type Config, type SecretName } from "./api.ts";
 import { hhmm } from "./format.ts";
 import { EyeIcon, EyeOffIcon } from "./icons.tsx";
 import { micHint, MicSelect, useInputs } from "./MicSelect.tsx";
-import { Segmented, Select } from "./ui.tsx";
+import { Segmented, Select, useUpdate } from "./ui.tsx";
 
 type Effort = Config["llm"]["claudeCode"]["effort"];
 const EFFORTS: { value: Effort; label: string }[] = [
@@ -239,6 +239,8 @@ export function SettingsWindow() {
             missing={llm.provider === "openai-compatible" && (!llm.openai.baseUrl.trim() || !llm.openai.model.trim()) ? "Fill in the endpoint and model first." : undefined}
           />
         </Group>
+
+        <UpdatesGroup auto={config.updateCheck} onToggle={() => update({ updateCheck: !config.updateCheck })} />
       </div>
     </div>
   );
@@ -268,6 +270,71 @@ function TestRow({ missing }: { missing?: string }) {
         {state.running ? "Testing…" : "Test"}
       </button>
     </Row>
+  );
+}
+
+/** Settings › Updates: this version, Check Now, and the newer release when there is one. */
+function UpdatesGroup(props: { auto: boolean; onToggle(): void }) {
+  const update = useUpdate();
+  const [copied, setCopied] = useState(false);
+  const commandRef = useRef<HTMLElement>(null);
+  if (!update) return null;
+  const { available, installing } = update;
+  const status = update.checking
+    ? "Checking…"
+    : available
+      ? `Oatcake ${available.version} is available.`
+      : update.checkedAt
+        ? `Up to date · checked at ${hhmm(new Date(update.checkedAt))}`
+        : "Not checked yet.";
+  const copy = () => {
+    if (!commandRef.current) return;
+    getSelection()?.selectAllChildren(commandRef.current);
+    document.execCommand("copy");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <Group label="Updates">
+      <Row title={`Oatcake ${update.current}`} sub={update.error ?? status} tone={update.error ? "red" : ""}>
+        <button className="btn" disabled={update.checking || !!installing} onClick={() => api.checkForUpdate()}>
+          Check Now
+        </button>
+      </Row>
+      {available && (
+        <div className="group-stack">
+          <span>What's new in {available.version}</span>
+          {available.notes && <div className="update-notes">{available.notes}</div>}
+          {update.blocked ? (
+            <>
+              <span className="sub amber">{update.blocked}</span>
+              {update.command && (
+                <div className="secret">
+                  <code ref={commandRef} className="field command">
+                    {update.command}
+                  </code>
+                  <button className="btn" onClick={copy}>
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="update-install">
+              <button className="btn primary" disabled={!!installing} onClick={() => api.installUpdate()}>
+                {installing ?? "Install and Relaunch"}
+              </button>
+              <span className="sub">{Math.round(available.size / 1e6)} MB download. Oatcake quits and reopens.</span>
+            </div>
+          )}
+        </div>
+      )}
+      <Row title="Check for updates automatically" sub="Once a day. Nothing is installed until you choose to.">
+        <span className={`switch ${props.auto ? "on" : ""}`} onClick={props.onToggle}>
+          <span />
+        </span>
+      </Row>
+    </Group>
   );
 }
 

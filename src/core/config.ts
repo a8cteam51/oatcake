@@ -44,6 +44,8 @@ export interface Config {
   mic: { uid: string; name: string } | null;
   /** A notification 5 minutes before each call, with a button to open it and start recording. */
   callReminders: boolean;
+  /** Look for a new release 20 seconds after launch and once a day. */
+  updateCheck: boolean;
 }
 
 function onPath(command: string): boolean {
@@ -82,6 +84,7 @@ function defaults(): Config {
     keepAudio: false,
     mic: null,
     callReminders: true,
+    updateCheck: true,
   };
 }
 

@@ -125,12 +125,49 @@ by asking Claude, with the Granola connector, to save each meeting's summary and
 The script reads the title from `summary.md`'s first `# ` heading and the participants from a
 `- **Participants:** Name (…), Name (…)` line; folder times are read as local time.
 
-## Install and run
+## Install
 
-Needs an Apple Silicon Mac on macOS 14.2 or later (the recorder uses Core Audio process taps),
-Node 22 or later, and Xcode's command line tools (`xcode-select --install`) to build the
-recorder. Summaries use Claude Code by default: install it and sign in, or pick another
-provider in Settings.
+Needs an Apple Silicon Mac on macOS 14.2 or later (the recorder uses Core Audio process taps).
+Paste this into Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/a8cteam51/oatcake/trunk/install.sh | sh
+```
+
+It downloads the latest release, checks its checksum and code signature, puts
+Oatcake in Applications (or `~/Applications` if you can't write there) and opens it. Run it again
+any time to reinstall. Oatcake isn't notarised: a zip downloaded with a browser gets macOS's
+quarantine flag and is blocked, while files curl downloads aren't, which is why the install is a
+Terminal line. The first recording asks for microphone and system-audio permission for
+"OatcakeRecorder". Summaries use Claude Code by default: install it and sign in, or pick another
+provider in Settings. The first processing run downloads ~700 MB of models to
+`~/Library/Application Support/Oatcake/models`.
+
+## Updates
+
+Oatcake looks for a new release 20 seconds after it opens and then once a day (Settings ›
+Updates can turn that off, and has Check Now). A new release shows in the sidebar above
+Settings; **Update** downloads it, checks it, and quits and reopens Oatcake on the new version.
+It waits while a call is being recorded, analysed or saved. Nothing is installed until you
+click.
+
+Each release carries `latest.json`, a manifest naming the version and its zip (address,
+SHA-256, size), signed with Oatcake's Ed25519 release key. Oatcake checks that signature
+against the public keys it ships (`src/core/update-keys.ts`), checks the zip's size and
+checksum, unpacks it with `ditto`, checks it's Oatcake at that version, and checks the new app
+is signed with the same certificate as the running one (`codesign --verify --deep --strict -R`
+with the running app's designated requirement). The new copy is staged next to the installed
+one; a small detached script waits for Oatcake to quit, swaps the two, and opens it. Its log is
+`~/Library/Application Support/Oatcake/update.log`. The mechanics are in `src/core/update.ts`.
+
+A copy that can't replace itself says why in Settings and offers the install line instead: a
+development copy, one built without the release certificate, one in a folder you can't write
+to, or one macOS is running from a quarantined download.
+
+## Build from source
+
+Needs Node 22 or later and Xcode's command line tools (`xcode-select --install`) to build the
+recorder.
 
 ```sh
 npm install
@@ -140,26 +177,49 @@ npm start                               # development
 npm run package                         # out/Oatcake-darwin-arm64/Oatcake.app
 ```
 
-The packaged app is ad-hoc signed, not notarised. Built on your own Mac it opens normally;
-copied to another Mac, macOS blocks the first open until you allow it in System Settings ›
-Privacy & Security › Open Anyway. The first processing run downloads ~700 MB of models to
-`~/Library/Application Support/Oatcake/models`. The Dock badge counts recordings waiting
-under Needs review. The icon is `assets/icon.svg`; `assets/Oatcake.icns` is built from
-`assets/icon.png` with `iconutil`.
+The packaged app isn't notarised. It's signed with the "Oatcake Release" certificate when that's
+in your keychain, and ad-hoc otherwise. macOS ties the recorder's microphone and system-audio
+permission, and Oatcake's Keychain access, to the signature: an ad-hoc build is a new app to macOS
+every time (so it asks again), and only a release-signed copy can update itself. The Dock badge
+counts recordings waiting under Needs review. The icon is `assets/icon.svg`;
+`assets/Oatcake.icns` is built from `assets/icon.png` with `iconutil`.
 
-To release a build, bump the version and push its tag:
+## Releasing
+
+Bump the version and push its tag:
 
 ```sh
-npm version patch            # or minor; commits package.json and tags v0.1.1
+npm version patch            # or minor; commits package.json and tags v0.2.1
 git push --follow-tags
 ```
 
-The Release workflow (`.github/workflows/release.yml`) builds and packages the app on a GitHub
-Mac runner and attaches `Oatcake-v0.1.1-arm64.zip` to a new GitHub release. It stops if the tag
-doesn't match `package.json`'s version. Running it by hand from the Actions tab only checks that
-it builds. The recorder is ad-hoc signed, and macOS ties its permissions to that exact build, so
-after an update (or switching to your own build) it may ask for microphone and system-audio
-permission again. A Developer ID signature would stop that.
+The Release workflow (`.github/workflows/release.yml`) builds the app on a GitHub Mac runner,
+signs it and the recorder with the release certificate (and stops if either ends up with any
+other signature), zips it, writes and signs `latest.json` with the commit subjects since the
+previous tag as notes, attaches both to a new GitHub release, and checks the public feed serves
+that `latest.json`. It stops if the tag doesn't match `package.json`'s version. Running it by
+hand from the Actions tab builds and signs without releasing.
+
+It needs three repository secrets:
+
+- `OATCAKE_SIGNING_P12` and `OATCAKE_SIGNING_P12_PASSWORD`: the "Oatcake Release" code-signing
+  identity (a self-signed certificate valid until 2046), base64-encoded `.p12` and its password.
+  It isn't from Apple, so it doesn't satisfy Gatekeeper; what matters is that every release
+  carries the same one, so permissions survive updates and installed copies accept the next
+  release.
+- `OATCAKE_UPDATE_KEY`: the Ed25519 private key that signs `latest.json` (base64 PKCS#8 DER).
+  `node scripts/sign-manifest.mjs keygen` makes a new pair.
+
+Keep copies of the certificate and the update key somewhere safe outside GitHub (secrets can't be
+read back). If the certificate is lost, installed copies won't accept releases signed with a new
+one and need the install line once. To replace the update key, add the new public key to
+`src/core/update-keys.ts`, release, and only then sign with the new key.
+
+To build release-signed copies locally (so a rebuilt recorder keeps its permissions), import the
+`.p12` into your login keychain; `npm run package` and `npm run build:recorder` then use it.
+To try an update before publishing it, serve a folder holding a zip and its `latest.json` and
+start Oatcake with `OATCAKE_UPDATE_FEED=http://127.0.0.1:8000/latest.json`; `install.sh` takes
+`OATCAKE_FEED` the same way. With either, the zip is fetched from beside the manifest.
 
 ## Settings
 
@@ -182,8 +242,8 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   hour, or when you press ↻ next to Upcoming, and keeps events from yesterday to two weeks
   ahead in `calendar.json`. Upcoming in the sidebar lists the rest of today and tomorrow
   (events you declined are left out). Clicking one starts a new recording named after it, in
-  the folder with the same name or path ("Sam & Alex 1:1" finds "Sam & Alex 1-1", "Team 51 –
-  Leads sync" finds "Team 51 › Leads sync"), or offers a new folder for a recurring event
+  the folder with the same name or path ("Sam & Alex 1:1" finds "Sam & Alex 1-1", "Product –
+  Weekly sync" finds "Product › Weekly sync"), or offers a new folder for a recurring event
   with none; "Join the call" opens its Meet, Zoom or Teams link (only links on those services'
   own domains count, so a look-alike address is never opened). A failed
   fetch keeps the last events and turns ↻ red; hover it for the reason.
@@ -205,6 +265,9 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
 - Summaries and answers are rendered with any HTML shown as text, under a content security
   policy that allows only the app's own scripts and no remote images.
 - Downloaded speech models are checked against pinned SHA-256 checksums before use.
+- Updates are installed only from a `latest.json` signed with Oatcake's release key, only if the
+  zip matches its checksum, and only if the new app carries the running app's code-signing
+  identity (see Updates).
 - The packaged app has Electron's fuses set: it can't be run as plain Node
   (`ELECTRON_RUN_AS_NODE`), ignores `NODE_OPTIONS` and `--inspect`, and loads its code only
   from its own asar, whose checksum is verified.
@@ -212,8 +275,7 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   new temporary file and renamed into place, never through an existing file or link.
 - Known gap: `OatcakeRecorder.app` holds the microphone and system-audio permissions, and any
   program running as you can launch it (`open … --args --out <dir>`) to record. Closing that
-  needs the recorder to check who launched it, which means rebuilding it, and a rebuilt
-  recorder asks for both permissions again.
+  needs the recorder to check who launched it.
 - Recording one call at a time is enforced by the main process. If Oatcake quits or crashes
   mid-call, the next launch picks the recording up again (still running) or finishes it from
   the audio on disk (recorder gone), so nothing is left recording unseen or stuck.

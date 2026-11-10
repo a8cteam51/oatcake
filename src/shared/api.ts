@@ -19,6 +19,22 @@ export interface MenuItem {
   submenu?: MenuItem[];
 }
 
+export interface UpdateState {
+  /** This copy's version. */
+  current: string;
+  checking: boolean;
+  /** When the last check succeeded. */
+  checkedAt?: string;
+  /** A newer release, if there is one. */
+  available?: { version: string; notes: string; size: number };
+  /** Why this copy can't install it itself, and the Terminal command that can, when that helps. */
+  blocked?: string;
+  command?: string;
+  /** What an install in progress is doing ("Downloading… 40%"). */
+  installing?: string;
+  error?: string;
+}
+
 export interface MeetingMeta {
   title?: string;
   startedAt?: string;
@@ -55,6 +71,12 @@ export interface Api {
   /** A recording was started outside the window (a reminder's button). */
   onRecordingStarted(callback: () => void): () => void;
   testReminder(): Promise<string | null>;
+
+  getUpdate(): Promise<UpdateState>;
+  checkForUpdate(): Promise<UpdateState>;
+  /** Downloads, checks and installs the newer release, then relaunches. Problems arrive as the state's error. */
+  installUpdate(): Promise<void>;
+  onUpdateChanged(callback: (state: UpdateState) => void): () => void;
 
   getTree(): Promise<TreeNode>;
   /** Every meeting's todo.md, for the combined To-dos page. */
