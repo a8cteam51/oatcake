@@ -29,6 +29,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Loominate
+
+`install.sh` adapts Loominate's installer (github.com/a8cteam51/loominate, by WordPress.com
+Special Projects at Automattic), and the update design (a signed manifest on each GitHub
+release, checking the new app against the running app's code-signing identity, swapping after
+quit) follows Loominate's. Loominate is GPL-2.0-or-later, used here under GPL-3.0.
+
 ## Models (downloaded on first run, not bundled)
 
 - NVIDIA Parakeet (via sherpa-onnx conversions): CC-BY-4.0

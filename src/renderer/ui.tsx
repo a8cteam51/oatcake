@@ -1,7 +1,8 @@
 // Small shared pieces of the design: segmented controls, selects, avatars, the spinner, the
-// recording dot, the confirmation sheet and toasts.
+// recording dot, the confirmation sheet, toasts and the update state.
 import { useEffect, useState } from "react";
 import { SelectChevrons } from "./icons.tsx";
+import { api, type UpdateState } from "./api.ts";
 import { cleanError, person } from "./format.ts";
 
 export function Segmented<T extends string>(props: {
@@ -126,4 +127,14 @@ export function ToastHost() {
     };
   }, []);
   return text ? <div className="toast">{text}</div> : null;
+}
+
+/** The update check's state, kept current by the main process (Settings › Updates and the sidebar's notice). */
+export function useUpdate(): UpdateState | null {
+  const [state, setState] = useState<UpdateState | null>(null);
+  useEffect(() => {
+    api.getUpdate().then(setState);
+    return api.onUpdateChanged(setState);
+  }, []);
+  return state;
 }

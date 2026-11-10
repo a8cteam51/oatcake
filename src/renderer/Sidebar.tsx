@@ -3,7 +3,7 @@ import { callApp } from "../shared/calls.ts";
 import { api, type Calendar, type CalendarEvent, type TreeNode } from "./api.ts";
 import { clock, hhmm } from "./format.ts";
 import { ChevronIcon, DotIcon, FolderIcon, NewFolderIcon, RefreshIcon, SettingsIcon, TodosIcon, WarningIcon } from "./icons.tsx";
-import { RecDot, Spinner, toast } from "./ui.tsx";
+import { RecDot, Spinner, toast, useUpdate } from "./ui.tsx";
 
 export interface Job {
   id: string;
@@ -337,6 +337,7 @@ export function Sidebar(props: Props) {
         {tree && subfolders(tree).map((n) => renderFolder(n, 0))}
         {tree && !subfolders(tree).length && <div className="sb-message">No folders yet.</div>}
       </div>
+      <UpdateNotice onSettings={props.onSettings} />
       <div className="sidebar-foot" title="Settings (⌘,)" onClick={props.onSettings}>
         <SettingsIcon />
         Settings
@@ -391,3 +392,33 @@ export function findNode(tree: TreeNode | null, path: string): TreeNode | null {
 
 /** "Google Meet", "Zoom" or "Microsoft Teams", from a call link. */
 export const linkName = (url: string) => callApp(url) ?? "the call";
+
+/** A newer release: Update installs it and relaunches; Details (when this copy can't update itself) opens Settings. */
+function UpdateNotice(props: { onSettings(): void }) {
+  const update = useUpdate();
+  if (!update?.available) return null;
+  const { available, installing, error } = update;
+  return (
+    <div className="sidebar-update">
+      <div className="text">
+        <span>{installing ?? `Oatcake ${available.version} is available`}</span>
+        {error && !installing && (
+          <span className="sub red" title={error}>
+            {error}
+          </span>
+        )}
+      </div>
+      {installing ? (
+        <Spinner />
+      ) : update.blocked ? (
+        <button className="btn" onClick={props.onSettings}>
+          Details
+        </button>
+      ) : (
+        <button className="btn primary" onClick={() => api.installUpdate()}>
+          Update
+        </button>
+      )}
+    </div>
+  );
+}

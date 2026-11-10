@@ -37,6 +37,7 @@ import { knownPeople } from "../core/speakers.ts";
 import type { ItemAction } from "../shared/api.ts";
 import { callApp } from "../shared/calls.ts";
 import { applySecrets, describeSecret, getSecret, setSecret, type SecretName } from "./secrets.ts";
+import { createUpdater } from "./updates.ts";
 
 // Apps opened from Finder get a bare PATH; borrow the login shell's so `claude` is found.
 // Markers, because interactive shells can print terminal escape codes before the value.
@@ -60,6 +61,8 @@ let settingsWin: BrowserWindow | null = null;
 const active = new Map<string, Recording>();
 const analysing = new Set<string>();
 const asking = new Map<string, () => void>();
+/** Meetings being saved (the summary step can take a minute). */
+let saving = 0;
 
 const recorderApp = () =>
   app.isPackaged
@@ -73,6 +76,19 @@ const meetingsRoot = () => loadConfig().outputDir;
 /** The calendar's private iCal address, kept encrypted with the API keys. "" = no calendar. */
 const calendarUrl = () => getSecret("calendar").trim();
 const RENDERER_PAGE = path.join(__dirname, "..", "renderer", "index.html");
+
+const updater = createUpdater({
+  send: (state) => send("update:changed", state),
+  autoCheck: () => loadConfig().updateCheck,
+  busy: () =>
+    active.size
+      ? "Oatcake is recording a call. Install the update after you stop."
+      : analysing.size
+        ? "Oatcake is analysing a call. Install the update when it's done."
+        : saving
+          ? "Oatcake is saving a meeting. Try again in a moment."
+          : undefined,
+});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -371,6 +387,10 @@ handle("reminder:test", () => {
   return next?.title ?? null;
 });
 
+handle("update:get", () => updater.state());
+handle("update:check", () => updater.check());
+handle("update:install", () => updater.install());
+
 handle("tree:get", () => listTree(meetingsRoot()));
 handle("todos:all", () => listTodos(meetingsRoot()));
 // The Dock icon's badge: recordings waiting for you under Needs review.
@@ -502,10 +522,15 @@ handle("rec:clip", (file: string) => {
   const full = resolveInside(RECORDINGS_DIR, path.relative(RECORDINGS_DIR, file));
   return `data:audio/wav;base64,${fs.readFileSync(full).toString("base64")}`;
 });
-handle("rec:save", (id: string, decisions, folder: string) => {
+handle("rec:save", async (id: string, decisions, folder: string) => {
   const rec = getRecording(id);
   if (!rec) throw new Error("Recording not found");
-  return saveMeeting(loadConfig(), rec, decisions, folder, (step) => send("save:progress", id, step));
+  saving++;
+  try {
+    return await saveMeeting(loadConfig(), rec, decisions, folder, (step) => send("save:progress", id, step));
+  } finally {
+    saving--;
+  }
 });
 handle("rec:discard", (id: string) => {
   if (active.has(id)) throw new Error("Stop the recording before discarding it.");
@@ -548,6 +573,7 @@ app.whenReady().then(() => {
   setInterval(() => refreshCalendar(), 5 * 60 * 1000);
   checkReminders();
   setInterval(checkReminders, 30 * 1000);
+  updater.start();
   app.on("activate", () => !win && createWindow());
 });
 

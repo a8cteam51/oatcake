@@ -1,4 +1,8 @@
-// Packages out/Oatcake-darwin-arm64/Oatcake.app (ad-hoc signed, not notarised).
+// Packages out/Oatcake-darwin-arm64/Oatcake.app, not notarised. It's signed with the "Oatcake Release"
+// certificate when that's in a keychain (OATCAKE_SIGN_IDENTITY / OATCAKE_SIGN_KEYCHAIN choose another),
+// otherwise ad-hoc. macOS ties the recorder's microphone and system-audio permission, and Oatcake's
+// Keychain access, to that identity: an ad-hoc build is a new app to macOS every time, and only a
+// release-signed copy can update itself. OATCAKE_REQUIRE_SIGNING=1 refuses to fall back to ad-hoc.
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
@@ -37,6 +41,8 @@ const [appDir] = await packager({
     NSAudioCaptureUsageDescription: "Oatcake records call audio so the other people on the call are in the transcript.",
     // Call reminders stay on screen with their button until dealt with, like Calendar's alerts.
     NSUserNotificationAlertStyle: "alert",
+    // The recorder uses Core Audio process taps, new in 14.2.
+    LSMinimumSystemVersion: "14.2",
   },
 });
 
@@ -51,5 +57,19 @@ await flipFuses(app, {
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
   [FuseV1Options.OnlyLoadAppFromAsar]: true,
 });
-execFileSync("codesign", ["--force", "--deep", "--sign", "-", app], { stdio: "inherit" });
-console.log(`Packaged ${app}`);
+
+const identity = process.env.OATCAKE_SIGN_IDENTITY || (hasIdentity("Oatcake Release") ? "Oatcake Release" : "-");
+if (identity === "-" && process.env.OATCAKE_REQUIRE_SIGNING) {
+  throw new Error('OATCAKE_REQUIRE_SIGNING is set, but no "Oatcake Release" signing identity was found.');
+}
+const keychain = process.env.OATCAKE_SIGN_KEYCHAIN ? ["--keychain", process.env.OATCAKE_SIGN_KEYCHAIN] : [];
+const sign = (target, ...extra) => execFileSync("codesign", ["--force", ...extra, "--sign", identity, ...keychain, target], { stdio: "inherit" });
+// The recorder sits in Resources, where --deep doesn't reach, so it's signed on its own first.
+sign(`${app}/Contents/Resources/OatcakeRecorder.app`);
+sign(app, "--deep");
+console.log(`Packaged ${app}, signed ${identity === "-" ? "ad-hoc" : `with "${identity}"`}`);
+
+/** Whether a code-signing identity is in the keychain. Self-signed, so listed as untrusted, which codesign accepts. */
+function hasIdentity(name) {
+  return execFileSync("security", ["find-identity", "-p", "codesigning"], { encoding: "utf8" }).includes(`"${name}"`);
+}
