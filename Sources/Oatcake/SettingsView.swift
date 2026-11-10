@@ -17,9 +17,10 @@ struct SettingsView: View {
             Form { PeopleSection() }.formStyle(.grouped).tabItem { Label("People", systemImage: "person.2") }.tag("people")
             Form { transcription }.formStyle(.grouped).tabItem { Label("Transcription", systemImage: "waveform") }.tag("transcription")
             Form { llmSection; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
+            Form { storage }.formStyle(.grouped).tabItem { Label("Storage", systemImage: "folder") }.tag("storage")
             Form { UpdatesSection() }.formStyle(.grouped).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
         }
-        .frame(width: 620, height: 540)
+        .frame(width: 620, height: 600)
         .task { devices = (try? await Recordings.listInputs()) ?? [] }
         .onAppear {
             jargon = model.config.jargon.joined(separator: ", ")
@@ -46,10 +47,6 @@ struct SettingsView: View {
                 Text("Live transcript")
                 Text("Shows what’s being said beside your notes during the call. It’s transcribed on your Mac; who said what on the call side is worked out afterwards.")
             }
-            Toggle(isOn: bind(\.keepAudio)) {
-                Text("Keep call audio after saving")
-                Text("When off, the audio is deleted once a meeting is saved. The transcript, notes and summary stay.")
-            }
         }
 
         Section {
@@ -67,13 +64,22 @@ struct SettingsView: View {
             Text("Oatcake notices a call by which apps have the microphone open. It doesn’t listen until you record.").settingsHint()
         }
 
+    }
+
+    @ViewBuilder private var storage: some View {
         Section("Storage") {
             LabeledContent {
                 Button("Choose…") { model.chooseMeetingsFolder() }
             } label: {
                 Text("Meetings folder")
-                Text(shortPath(config.outputDir)).font(.system(.caption, design: .monospaced)).help(config.outputDir)
+                Text(shortPath(model.config.outputDir)).font(.system(.caption, design: .monospaced)).help(model.config.outputDir)
             }
+            Toggle(isOn: bind(\.keepAudio)) {
+                Text("Keep call audio after saving")
+                Text("When off, the audio is deleted once a meeting is saved. The transcript, notes and summary stay.")
+            }
+        }
+        Section("Import") {
             GranolaRow()
         }
     }
@@ -195,8 +201,8 @@ struct SettingsView: View {
                 effortPicker(bindLlm(\.anthropic.effort))
             case .openaiCompatible:
                 TextField(text: bindLlm(\.openai.baseUrl), prompt: Text("e.g. http://localhost:11434/v1")) {
-                    Text("Endpoint")
-                    if llm.openai.baseUrl.trimmed.isEmpty { Text("Required").foregroundStyle(Color.amber) }
+                    Text("Endpoint").font(.body)
+                    if llm.openai.baseUrl.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
                 }
                 .font(.system(.body, design: .monospaced))
                 VStack(alignment: .leading, spacing: 6) {
@@ -204,8 +210,8 @@ struct SettingsView: View {
                     SecretField(name: .openai, placeholder: "sk-…")
                 }
                 TextField(text: bindLlm(\.openai.model), prompt: Text("e.g. llama3.1:70b")) {
-                    Text("Model")
-                    if llm.openai.model.trimmed.isEmpty { Text("Required").foregroundStyle(Color.amber) }
+                    Text("Model").font(.body)
+                    if llm.openai.model.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
                 }
                 .font(.system(.body, design: .monospaced))
                 effortPicker(bindLlm(\.openai.effort))
@@ -316,7 +322,7 @@ private struct GranolaRow: View {
             Button(running ? "Importing…" : "Import…") { Task { await run() } }.disabled(running)
         } label: {
             Text("Import from Granola")
-            Text(text ?? "Pick the .zip from Granola's export. Each note becomes a meeting; ones already here are skipped.")
+            Text(text ?? "Pick the .zip from Granola’s export. Each note becomes a meeting; ones already here are skipped.")
                 .foregroundStyle(failed ? Color.red : Color.secondary)
         }
     }
@@ -381,7 +387,7 @@ private struct SecretField: View {
             // A saved one can't be shown, so the eye only appears while typing a new one.
             if !draft.isEmpty {
                 Button { shown.toggle() } label: { Image(systemName: shown ? "eye.slash" : "eye") }
-                    .buttonStyle(.borderless).help("Show or hide what you're typing")
+                    .buttonStyle(.borderless).help("Show or hide what you're typing").accessibilityLabel(shown ? "Hide what you’re typing" : "Show what you’re typing")
             }
             if described.saved {
                 Button("Remove") {

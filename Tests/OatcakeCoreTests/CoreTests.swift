@@ -160,6 +160,30 @@ private func fixture(_ name: String) throws -> URL {
         #expect(throws: OatcakeError.self) { try meetings.retitle(renamed, to: "  ") }
     }
 
+    @Test func eventsGoWhereTheirEarlierMeetingsAre() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-event-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        func meeting(_ rel: String, _ title: String, _ started: String) throws {
+            let dir = root.appendingPathComponent(rel)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try #"{"title":"\#(title)","startedAt":"\#(started)"}"#.write(to: dir.appendingPathComponent("meeting.json"), atomically: true, encoding: .utf8)
+        }
+        try meeting("Old/2026-10-05 1000 Weekly sync", "Weekly sync", "2026-10-05T10:00:00.000Z")
+        try meeting("Team/2026-11-09 1000 Weekly sync", "Weekly Sync!", "2026-11-09T10:00:00.000Z")
+        try meeting("2026-11-03 0900 Coffee", "Coffee", "2026-11-03T09:00:00.000Z")
+        let meetings = Meetings(root: root)
+        // No folder is called "Weekly sync", so it goes where the latest one is, recurring or not.
+        #expect(try meetings.folderForEvent(title: "Weekly sync", recurring: true) == "Team")
+        #expect(try meetings.folderForEvent(title: "weekly sync", recurring: false) == "Team")
+        // The latest "Coffee" is at the top level, so no folder is made for it.
+        #expect(try meetings.folderForEvent(title: "Coffee", recurring: true) == "")
+        // A folder named like the event still comes first, and a new recurring event still gets its own.
+        _ = try meetings.createFolder(in: "Team", named: "Weekly sync")
+        #expect(try meetings.folderForEvent(title: "Weekly sync", recurring: false) == "Team/Weekly sync")
+        #expect(try meetings.folderForEvent(title: "Board prep", recurring: true) == "Board prep")
+        #expect(try meetings.folderForEvent(title: "One-off chat", recurring: false) == "")
+    }
+
     @Test func searchesEveryMeetingsText() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-search-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -418,6 +442,16 @@ private func fixture(_ name: String) throws -> URL {
     }
 
     /// A config written by an earlier version has none of the newer settings: they take their defaults.
+    @Test func partProviderSettings() throws {
+        // A provider's settings with a key missing keep the keys that are there.
+        let json = #"{"provider":"openai-compatible","openai":{"baseUrl":"http://localhost:11434/v1","model":"llama3.1"},"anthropic":{"effort":"high"}}"#
+        let llm = try JSONDecoder().decode(LlmConfig.self, from: Data(json.utf8))
+        #expect(llm.provider == .openaiCompatible)
+        #expect(llm.openai.baseUrl == "http://localhost:11434/v1" && llm.openai.model == "llama3.1" && llm.openai.effort == .medium)
+        #expect(llm.anthropic.effort == .high && llm.anthropic.model == anthropicModels[0])
+        #expect(llm.claudeCode == LlmConfig.ClaudeCode())
+    }
+
     @Test func olderConfig() throws {
         let old = #"{"myName":"Sam","outputDir":"/tmp/m","asrModel":"parakeet-unified-en","keepAudio":false,"mic":null,"callReminders":false,"updateCheck":true}"#
         let config = try JSONDecoder().decode(Config.self, from: Data(old.utf8))

@@ -161,6 +161,7 @@ struct MeetingView: View {
             .labelsHidden()
         }
         ToolbarItemGroup(placement: .automatic) {
+            // How saving is going stays up here, in sight wherever the note is scrolled to.
             if markdown || status == "todo" || status == "failed" {
                 HStack(spacing: 6) {
                     Text(["saving": "Saving…", "saved": "Saved", "failed": "Couldn’t save", "todo": "Saved to todo.md"][status] ?? "Saves as you type")
@@ -169,13 +170,6 @@ struct MeetingView: View {
                 }
                 .font(.callout)
             }
-            Picker("View", selection: Binding(get: { markdown }, set: { flush(); markdown = $0; Remembered.markdown = $0; status = "" })) {
-                Text("Rendered").tag(false)
-                Text("Markdown").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
             let what = tab == .summary ? "summary and to-dos" : tab == .transcript ? "transcript" : "notes"
             Button { copy() } label: { Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") }
                 .help("Copy the \(what) as Markdown")
@@ -184,6 +178,19 @@ struct MeetingView: View {
             Button { model.reveal(path) } label: { Label("Show in Finder", systemImage: "arrow.up.forward.square") }
                 .help("Show this meeting’s folder in Finder")
         }
+    }
+
+    /// Rendered or Markdown: how the note below is shown. It sits at the top right of the note, beside its title.
+    private var viewSwitch: some View {
+        Picker("View", selection: Binding(get: { markdown }, set: { flush(); markdown = $0; Remembered.markdown = $0; status = "" })) {
+            Text("Rendered").tag(false)
+            Text("Markdown").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+        .help("Read the note as it’s laid out, or edit its Markdown")
     }
 
     /// What Copy and Share take: the tab you're on, as Markdown under the meeting's title and date.
@@ -240,7 +247,10 @@ struct MeetingView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    PageTitle(text: meta.title ?? meetingTitle(node))
+                    HStack(alignment: .top, spacing: 16) {
+                        PageTitle(text: meta.title ?? meetingTitle(node)).frame(maxWidth: .infinity, alignment: .leading)
+                        viewSwitch.padding(.top, 5)
+                    }
                     Text(metaLine).foregroundStyle(.secondary).padding(.top, 8)
                     if granola {
                         Notice(tone: .grey) { Text(granolaNotice(files)) }.padding(.top, 14)
@@ -345,7 +355,7 @@ struct MeetingView: View {
                 if !todos.isEmpty { SectionLabel(text: "To-dos\(open > 0 ? " · \(open) open" : "")") }
                 ForEach(todos, id: \.line) { t in
                     HStack(alignment: .top, spacing: 10) {
-                        TodoCheckbox(checked: t.done) { write(.todos, toggleTodo(todoText, line: t.line), now: true) }
+                        TodoCheckbox(checked: t.done, what: t.text) { write(.todos, toggleTodo(todoText, line: t.line), now: true) }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(t.text).strikethrough(t.done).foregroundStyle(t.done ? .secondary : .primary).textSelection(.enabled)
                             let detail = [t.owner.isEmpty ? nil : ownerLabel(t.owner, model.config.myName), t.due.isEmpty ? nil : "due \(t.due)"].compactMap { $0 }
@@ -395,7 +405,12 @@ struct MeetingView: View {
                 } else {
                     Text("The transcript and your notes are saved. Oatcake can write the summary and to-dos from them now.")
                 }
-                Button("Write summary") { model.writeSummary(path) }.padding(.top, 6)
+                HStack(spacing: 10) {
+                    Button("Write summary") { model.writeSummary(path) }
+                    // What stopped it is usually put right in Settings: the model, its sign-in or key.
+                    if error != nil { SettingsLink { Text("Open Settings") }.buttonStyle(.link).simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("summaries", forKey: "settingsPane") }) }
+                }
+                .padding(.top, 6)
             }
         }
     }
@@ -433,8 +448,8 @@ struct MeetingView: View {
                 .onChange(of: query) { match = 0 }
             Text(query.trimmed.isEmpty ? "" : found.isEmpty ? "Not found" : "\(min(match, found.count - 1) + 1) of \(found.count)")
                 .font(.callout).foregroundStyle(.secondary).monospacedDigit()
-            Button { step(-1, found) } label: { Image(systemName: "chevron.up") }.disabled(found.isEmpty).help("Previous")
-            Button { step(1, found) } label: { Image(systemName: "chevron.down") }.disabled(found.isEmpty).help("Next (Return)")
+            Button { step(-1, found) } label: { Image(systemName: "chevron.up") }.disabled(found.isEmpty).help("Previous").accessibilityLabel("Previous match")
+            Button { step(1, found) } label: { Image(systemName: "chevron.down") }.disabled(found.isEmpty).help("Next (Return)").accessibilityLabel("Next match")
             Button("Done") { endFind() }.help("Close (Esc)")
         }
         .buttonStyle(.borderless)

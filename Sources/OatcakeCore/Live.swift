@@ -69,7 +69,7 @@ nonisolated(unsafe) private var chosenPlaceholders: [String: String] = [:]
  */
 public func transcribeLive(_ dir: URL, report: @escaping (LiveEvent) -> Void) async throws {
     let config = Config.load()
-    report(LiveEvent(status: SpeechModels.needsDownload(config.asrModel) ? "Downloading the speech models (first time only)" : "Loading the speech models"))
+    report(LiveEvent(status: SpeechModels.needsDownload(config.asrModel) ? "Downloading the speech models (about 500 MB, first time only)" : "Loading the speech models"))
     let transcriber = try await SpeechModels.loadTranscriber(config.asrModel)
     report(LiveEvent(status: "Listening"))
     // Samples of each track already dealt with. The call audio first, so a line of yours that only

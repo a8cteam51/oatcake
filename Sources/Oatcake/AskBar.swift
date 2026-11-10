@@ -25,10 +25,10 @@ struct AskBar: View {
                     .onSubmit { submit() }
                 if chat.running != nil {
                     Button { chat.cancel() } label: { Image(systemName: "stop.fill").font(.system(size: 10)) }
-                        .buttonStyle(RoundButtonStyle(filled: true)).help("Stop")
+                        .buttonStyle(RoundButtonStyle(filled: true)).help("Stop").accessibilityLabel("Stop")
                 } else {
                     Button { submit() } label: { Image(systemName: "arrow.up").font(.system(size: 12, weight: .bold)) }
-                        .buttonStyle(RoundButtonStyle(filled: !draft.trimmed.isEmpty)).help("Send (Return)")
+                        .buttonStyle(RoundButtonStyle(filled: !draft.trimmed.isEmpty)).help("Send (Return)").accessibilityLabel("Send")
                 }
             }
             .padding(.leading, 16)

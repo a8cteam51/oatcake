@@ -13,19 +13,40 @@ public enum LlmProvider: String, Codable, CaseIterable, Sendable {
  * switching back and forth loses nothing. API keys are kept in the Keychain (see Secrets).
  */
 public struct LlmConfig: Codable, Equatable, Sendable {
+    // Each of these reads its settings one by one, like Config does: a key that's missing (a file from
+    // another version, or one edited by hand) falls back to its default and leaves the others alone.
     public struct ClaudeCode: Codable, Equatable, Sendable {
         /// "" for Claude Code's default, or an alias such as "sonnet", "opus", "haiku".
         public var model = ""
         public var effort = Effort.medium
+        public init() {}
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? ""
+            effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
+        }
     }
     public struct Anthropic: Codable, Equatable, Sendable {
         public var model = anthropicModels[0]
         public var effort = Effort.medium
+        public init() {}
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? anthropicModels[0]
+            effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
+        }
     }
     public struct OpenAI: Codable, Equatable, Sendable {
         public var baseUrl = ""
         public var model = ""
         public var effort = Effort.medium
+        public init() {}
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            baseUrl = (try? c.decodeIfPresent(String.self, forKey: .baseUrl)) ?? ""
+            model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? ""
+            effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
+        }
     }
 
     public var provider: LlmProvider

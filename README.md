@@ -59,10 +59,12 @@ calendar, Needs review, and your folders), the meetings in the selected folder, 
 meeting itself. Settings (⌘,) is its own window, in panes; changes apply as you make them.
 ⌘N starts a new recording, ⌥⌘F searches every meeting from the box above the meeting list (its
 title, folder, summary, to-dos, notes and transcript; a meeting found by its text shows the line
-with the words and opens there), and ⌘F finds words in the transcript you're reading.
+with the words and opens there), and ⌘F finds words in the transcript you're reading. ⇧⌘N makes a
+folder and ⌘R refreshes the calendar; all of these are in the File and Edit menus.
 
 1. **Record.** New recording, or click an event under Upcoming. Pick the folder (a calendar
-   event picks the folder named like it, or offers a new one for a recurring event); leave
+   event picks the folder named like it, or the one its earlier meetings are in, or offers a
+   new one for a recurring event); leave
    the title blank to use the folder's name. The screen shows the event's attendees, the
    open to-dos from the last meeting in that folder (ticking one updates its `todo.md`),
    and takes prep notes, which open the call's notes. Your microphone is recorded as you;
@@ -123,8 +125,8 @@ with the words and opens there), and ⌘F finds words in the transcript you're r
    steer what the summary focuses on but aren't copied into it. A long turn in the transcript is
    broken at a pause about every half minute, each part with its own time.
    Tabs: Summary (with the meeting's to-dos at the top), Transcript and My notes (⌘1–⌘3),
-   each Rendered or as editable Markdown (saved as you type; Summary shows `todo.md` and
-   `summary.md`). **Copy** puts the tab you're on (the summary with its to-dos, the transcript,
+   each Rendered or as editable Markdown from the switch at the top right of the note (saved as
+   you type; Summary shows `todo.md` and `summary.md`). **Copy** puts the tab you're on (the summary with its to-dos, the transcript,
    or your notes) on the clipboard as Markdown under the meeting's title and date, and **Share**
    sends the same text with Mail, Messages or another app. Tick to-dos off in place; a to-do's time jumps to that moment in the
    transcript. **To-dos** at the top of the sidebar gathers every meeting's to-dos (open
@@ -374,7 +376,7 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   provider in `Sources/OatcakeCore/Llm.swift`.
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
-- **Keep call audio:** off by default; audio is deleted once a meeting is saved.
+- **Keep call audio** (Settings › Storage): off by default; audio is deleted once a meeting is saved.
 - **Live transcript**, **Offer to record when a call starts**, **Stop recording when the call
   ends:** all on by default (Settings › General); see Record above.
 - **Jargon** (Settings › Summaries): names, products and acronyms, separated by commas. The

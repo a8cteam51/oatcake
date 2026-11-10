@@ -72,9 +72,10 @@ struct NewRecordingView: View {
     }
 
     /**
-     * Where a calendar event's recording goes: the folder named like the event (punctuation ignored).
-     * A recurring event with no such folder gets a new one named after it; a one-off goes at the top
-     * level. Without an event, the folder selected in the sidebar.
+     * Where a calendar event's recording goes: the folder named like the event (punctuation ignored),
+     * or else where the latest meeting of the same name is. Failing both, a recurring event gets a new
+     * folder named after it and a one-off goes at the top level. Without an event, the folder selected
+     * in the sidebar. (Meetings.folderForEvent makes the same choice for a call started from a notification.)
      */
     private func setUp() {
         ready = true
@@ -85,6 +86,9 @@ struct NewRecordingView: View {
         }
         if let tree = model.tree, let match = matchingFolder(event.title, in: tree) {
             folder = match
+        } else if let tree = model.tree, let earlier = latestMeeting(titled: event.title, in: tree) {
+            let parent = parentOf(earlier.path)
+            folder = parent.isEmpty ? topLevel : parent
         } else if event.seriesId != nil {
             folder = newFolder
             // Folder names can't contain "/" or ":" ("Sam & Alex 1:1" becomes "Sam & Alex 1-1").
@@ -196,7 +200,7 @@ struct NewRecordingView: View {
             }
             ForEach(openTodos, id: \.line) { t in
                 HStack(spacing: 10) {
-                    TodoCheckbox(checked: t.done) { tick(t) }
+                    TodoCheckbox(checked: t.done, what: t.text) { tick(t) }
                     Text(t.text).strikethrough(t.done).foregroundStyle(t.done ? .secondary : .primary)
                     Spacer()
                     Text(ownerLabel(t.owner, model.config.myName)).foregroundStyle(.secondary)

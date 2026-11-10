@@ -87,7 +87,7 @@ public func analyse(_ dir: URL, report: @escaping (AnalysisProgress) -> Void) as
     let call = try readJSON(CallInfo.self, dir.appendingPathComponent("call.json"))
     let meta = try readJSON(RecorderMeta.self, dir.appendingPathComponent("meta.json"))
 
-    report(.init(step: SpeechModels.needsDownload(config.asrModel) ? "Downloading speech models (first run only)" : "Loading speech models"))
+    report(.init(step: SpeechModels.needsDownload(config.asrModel) ? "Downloading speech models (about 500 MB, first run only)" : "Loading speech models"))
     let transcriber = try await SpeechModels.loadTranscriber(config.asrModel)
     let diarizer = try await SpeechModels.loadDiarizer()
 

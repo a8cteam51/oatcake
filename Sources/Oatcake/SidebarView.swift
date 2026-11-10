@@ -43,7 +43,7 @@ struct SidebarView: View {
                     Text("Meetings")
                     Spacer()
                     Button { newFolderIn = ""; draft = "" } label: { Image(systemName: "folder.badge.plus") }
-                        .buttonStyle(.borderless).help("New folder")
+                        .buttonStyle(.borderless).help("New folder").accessibilityLabel("New folder")
                         .padding(.trailing, 1.5) // This symbol's badge reaches further right than the refresh arrow.
                 }
                 .padding(.trailing, headerButtonInset)
@@ -82,6 +82,7 @@ struct SidebarView: View {
         }
         .onChange(of: open) { UserDefaults.standard.set(Array(open), forKey: "openFolders") }
         .onChange(of: model.folder) { revealSelectedFolder() }
+        .onChange(of: model.newFolderRequest) { newFolderIn = ""; draft = "" }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $draft)
             Button("Rename") { if let node = renaming { model.rename(node.path, to: draft) } }
@@ -199,6 +200,7 @@ struct SidebarView: View {
                         .symbolEffect(.rotate, isActive: model.calendarFetching)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Refresh the calendar")
                 .disabled(model.calendarFetching)
                 .help("\(calendarTip(calendar)). Refresh now.")
             }
@@ -314,6 +316,7 @@ private struct FolderRow: View {
                     .frame(width: 12, height: 16)
                     .contentShape(Rectangle())
             }
+            .accessibilityLabel("\(open.contains(node.path) ? "Hide" : "Show") the folders in \(node.name)")
             .buttonStyle(.plain)
             .opacity(node.subfolders.isEmpty ? 0 : 1)
             .disabled(node.subfolders.isEmpty)

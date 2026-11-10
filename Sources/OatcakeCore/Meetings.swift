@@ -262,12 +262,15 @@ public final class Meetings: @unchecked Sendable {
 
     /**
      * The folder a calendar event's recording goes in: the folder named like the event (punctuation
-     * ignored, so "Sam & Alex 1:1" finds "Sam & Alex 1-1"), by its own name or its whole path. A
-     * recurring event with no such folder gets a new top-level one named after it; a one-off goes at
-     * the top level.
+     * ignored, so "Sam & Alex 1:1" finds "Sam & Alex 1-1"), by its own name or its whole path. With no
+     * such folder, it goes where the latest meeting of the same name is (a "Weekly sync" kept in
+     * Team stays in Team). Failing that, a recurring event gets a new top-level folder named after
+     * it, and a one-off goes at the top level.
      */
     public func folderForEvent(title: String, recurring: Bool) throws -> String {
-        if let match = matchingFolder(title, in: tree()) { return match }
+        let tree = tree()
+        if let match = matchingFolder(title, in: tree) { return match }
+        if let earlier = latestMeeting(titled: title, in: tree) { return (earlier.path as NSString).deletingLastPathComponent }
         if !recurring { return "" }
         let name = safeName(title).isEmpty ? "Calls" : safeName(title)
         return FileManager.default.exists(try resolveInside(root, name)) ? name : try createFolder(in: "", named: name)
@@ -304,6 +307,15 @@ public func matchingFolder(_ title: String, in tree: TreeNode) -> String? {
     guard !key.isEmpty else { return nil }
     let folders = tree.allFolders.map(\.path)
     return folders.first { loose(($0 as NSString).lastPathComponent) == key } ?? folders.first { loose($0) == key }
+}
+
+/// The most recent meeting with this title, compared as loosely as folder names are.
+public func latestMeeting(titled title: String, in tree: TreeNode) -> TreeNode? {
+    let key = loose(title)
+    guard !key.isEmpty else { return nil }
+    let named = { (m: TreeNode) in m.title ?? m.name.replacingOccurrences(of: #"^\d{4}-\d{2}-\d{2} \d{4} "#, with: "", options: .regularExpression) }
+    return tree.allMeetings.filter { loose(named($0)) == key }
+        .max { ($0.startedAt ?? .distantPast, $0.name) < ($1.startedAt ?? .distantPast, $1.name) }
 }
 
 /// A meeting's folder name: "2026-11-05 1400 Weekly sync", in local time.

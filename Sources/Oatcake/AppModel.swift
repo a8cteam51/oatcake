@@ -95,6 +95,8 @@ final class AppModel {
     /// Bumped by ⌘F and ⌥⌘F: the open meeting shows Find, the meeting list focuses its search.
     var findRequest = 0
     var searchRequest = 0
+    /// File › New Folder: the sidebar asks for the new top-level folder's name.
+    var newFolderRequest = 0
     var status = RecorderStatus(state: .starting)
     var selection: Selection?
     /// The folder the middle column lists.
@@ -114,6 +116,9 @@ final class AppModel {
     private var helpers: [String: Process] = [:]
     private var autoStarted = Set<String>()
     private var liveHelper: Process?
+    /// The recording whose live transcript helper is running or on its way up. A second helper for the
+    /// same recording would say every line again.
+    private var liveTranscriptFor: String?
     /// When a calling app started using the microphone, whether recording has been offered for that
     /// call, whether the recording in progress has had a calling app on the microphone, and since
     /// when it has had neither that nor any call audio.
@@ -335,6 +340,8 @@ final class AppModel {
         // The Meetings folder only changes through the folder picker.
         var saved = new
         saved.outputDir = config.outputDir
+        // A control that sets what it already shows (a picker redrawn, a field losing focus) changes nothing.
+        guard saved != config else { return }
         config = saved
         try? saved.save()
         for rec in active.values { try? Recordings.setMic(rec.dir, uid: saved.mic?.uid) }
@@ -698,15 +705,19 @@ final class AppModel {
     // MARK: - Live transcript
 
     private func startLiveTranscript(_ rec: Recording) {
+        // Asked for again while the helper is still on its way up (settings saved just after the call
+        // started, say): one is enough.
+        guard liveTranscriptFor != rec.id else { return }
         liveLines = []
         liveStatus = ""
         guard config.liveTranscript, liveHelper == nil else { return }
+        liveTranscriptFor = rec.id
         liveStatus = "Starting"
         Task {
             _ = try? await ChildProcess.run(Bundle.main.executableURL!, ["--live", rec.dir.path], onStart: { process in
                 Task { @MainActor in
                     // The call may have ended (or the switch been turned off) before the helper got going.
-                    if self.live?.id == rec.id, self.config.liveTranscript { self.liveHelper = process } else { process.terminate() }
+                    if self.live?.id == rec.id, self.liveTranscriptFor == rec.id, self.config.liveTranscript { self.liveHelper = process } else { process.terminate() }
                 }
             }, onLine: { line in
                 guard let event = try? JSONDecoder().decode(LiveEvent.self, from: Data(line.utf8)) else { return }
@@ -723,6 +734,7 @@ final class AppModel {
     private func stopLiveTranscript() {
         liveHelper?.terminate()
         liveHelper = nil
+        liveTranscriptFor = nil
     }
 
     // MARK: - Menu bar

@@ -381,6 +381,8 @@ struct ReviewView: View {
                         Image(systemName: on ? "pause.fill" : "play.fill").font(.system(size: 9))
                         Text(clock(q.start)).monospacedDigit()
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(on ? "Pause" : "Play") the clip at \(clock(q.start))")
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(alignment: .leading) {
@@ -447,7 +449,8 @@ struct ReviewView: View {
                 for _ in 0..<40 where model.tree?.find(path) == nil {
                     try? await Task.sleep(for: .milliseconds(50))
                 }
-                if model.selection == .job(rec.id) { model.openMeeting(path) }
+                // On its summary, whichever tab you last read another meeting on: that's where the summary arrives.
+                if model.selection == .job(rec.id) { model.openMeeting(path, jump: Jump(tab: .summary)) }
             }
         } catch {
             self.error = error.localizedDescription

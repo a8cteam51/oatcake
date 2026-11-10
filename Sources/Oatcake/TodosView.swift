@@ -157,7 +157,7 @@ struct TodosView: View {
         let folder = item.meeting.path.isEmpty ? "" : parentOf(item.meeting.path)
         let date = item.meeting.startedAt.map(shortDate) ?? ""
         return HStack(alignment: .top, spacing: 10) {
-            TodoCheckbox(checked: item.todo.done) { tick(item) }.padding(.top, 1)
+            TodoCheckbox(checked: item.todo.done, what: item.todo.text) { tick(item) }.padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.todo.text).strikethrough(item.todo.done).textSelection(.enabled)
                 HStack(spacing: 8) {

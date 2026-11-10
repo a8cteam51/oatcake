@@ -44,7 +44,7 @@ struct MeetingListView: View {
                     }
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("Clear the search")
+                        .buttonStyle(.plain).help("Clear the search").accessibilityLabel("Clear the search")
                 }
             }
             .padding(.horizontal, 8)
@@ -59,7 +59,7 @@ struct MeetingListView: View {
                     Text(!search.isEmpty ? "No meetings match “\(search)”." : everything ? "No meetings yet." : "No meetings in this folder yet.")
                         .foregroundStyle(.secondary)
                     if search.isEmpty {
-                        Button { model.newRecording() } label: { Label("Record here", systemImage: "circle.fill") }
+                        Button { model.newRecording() } label: { Label(everything ? "New recording" : "Record here", systemImage: "circle.fill") }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -127,7 +127,7 @@ struct MeetingListView: View {
                 Text(date.map(longDate) ?? m.name).fontWeight(.semibold).lineLimit(1)
                 if let date {
                     Text("·").foregroundStyle(.tertiary)
-                    Text(hhmm(date)).foregroundStyle(.tertiary).monospacedDigit()
+                    Text(hhmm(date)).foregroundStyle(.secondary).monospacedDigit()
                 }
                 Spacer(minLength: 4)
                 if m.granola {

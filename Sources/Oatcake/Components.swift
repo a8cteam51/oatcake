@@ -111,6 +111,8 @@ struct RecDot: View {
 
 struct TodoCheckbox: View {
     let checked: Bool
+    /// The to-do's text, so the button can be told apart from the next one without seeing it.
+    var what = ""
     let action: () -> Void
     var body: some View {
         Button(action: action) {
@@ -120,6 +122,7 @@ struct TodoCheckbox: View {
         }
         .buttonStyle(.plain)
         .help(checked ? "Mark as not done" : "Mark as done")
+        .accessibilityLabel((checked ? "Mark as not done" : "Mark as done") + (what.isEmpty ? "" : ": \(what)"))
     }
 }
 
