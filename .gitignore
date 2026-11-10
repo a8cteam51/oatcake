@@ -1,6 +1,5 @@
-node_modules/
-dist/
-out/
-recorder/build/
+.build/
+build/
+.swiftpm/
 .DS_Store
 *.log
