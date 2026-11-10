@@ -82,7 +82,13 @@ struct SidebarView: View {
         }
         .onChange(of: open) { UserDefaults.standard.set(Array(open), forKey: "openFolders") }
         .onChange(of: model.folder) { revealSelectedFolder() }
-        .onChange(of: model.newFolderRequest) { newFolderIn = ""; draft = "" }
+        // Also when the sidebar first appears: the window may have been closed when New Folder was chosen.
+        .onChange(of: model.wantsNewFolder, initial: true) {
+            guard model.wantsNewFolder else { return }
+            model.wantsNewFolder = false
+            newFolderIn = ""
+            draft = ""
+        }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $draft)
             Button("Rename") { if let node = renaming { model.rename(node.path, to: draft) } }

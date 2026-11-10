@@ -36,7 +36,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Recording") { model.newRecording() }.keyboardShortcut("n")
             // The sidebar's own buttons for these sit in section headers, out of reach of the keyboard and VoiceOver.
-            Button("New Folder") { model.showWindow(); model.newFolderRequest += 1 }.keyboardShortcut("n", modifiers: [.command, .shift])
+            Button("New Folder") { model.wantsNewFolder = true; model.showWindow() }.keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Refresh Calendar") { model.refreshCalendar(force: true) }.keyboardShortcut("r").disabled(model.calendar == nil)
         }
         CommandGroup(after: .pasteboard) {

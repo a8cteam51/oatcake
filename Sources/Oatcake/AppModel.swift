@@ -95,8 +95,9 @@ final class AppModel {
     /// Bumped by ⌘F and ⌥⌘F: the open meeting shows Find, the meeting list focuses its search.
     var findRequest = 0
     var searchRequest = 0
-    /// File › New Folder: the sidebar asks for the new top-level folder's name.
-    var newFolderRequest = 0
+    /// File › New Folder: the sidebar asks for the new top-level folder's name. It waits here until the
+    /// sidebar takes it, which is after the window has opened if it was closed.
+    var wantsNewFolder = false
     var status = RecorderStatus(state: .starting)
     var selection: Selection?
     /// The folder the middle column lists.
