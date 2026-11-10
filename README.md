@@ -198,24 +198,38 @@ None of this is built yet. It's what we'd like to add, in no fixed order.
 
 **Setting up**
 
-- A download that opens without Terminal.
+- A notarised download, so macOS opens Oatcake without the warning or the Terminal line.
 - Connecting a Google or Microsoft calendar by signing in, as well as by pasting its address.
 
 ## Install
 
 Needs an Apple Silicon Mac on macOS 15 or later (FluidAudio's diariser hits a Core ML bug that
-Apple fixed in macOS 15).
-Paste this into Terminal:
+Apple fixed in macOS 15). Oatcake isn't notarised by Apple, so macOS won't open a copy downloaded
+with a browser until you allow it. There are two ways to install it.
+
+**From Terminal.** Paste this:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/a8cteam51/oatcake/trunk/install.sh | sh
 ```
 
 It downloads the latest release, checks its checksum and code signature, puts
-Oatcake in Applications (or `~/Applications` if you can't write there) and opens it. Run it again
-any time to reinstall. Oatcake isn't notarised: a zip downloaded with a browser gets macOS's
-quarantine flag and is blocked, while files curl downloads aren't, which is why the install is a
-Terminal line. The first recording asks for microphone and system-audio permission for
+Oatcake in Applications (or `~/Applications` if you can't write there) and opens it. Files that
+curl downloads don't get macOS's quarantine flag, so there's no warning to get past. Run it again
+any time to reinstall.
+
+**By hand.**
+
+1. Download `Oatcake-v…-arm64.zip` from the
+   [latest release](https://github.com/a8cteam51/oatcake/releases/latest) and open it to unzip it.
+2. Drag Oatcake into your Applications folder and open it. macOS says it couldn't check Oatcake
+   for malware and doesn't open it. Choose Done, not Move to Trash.
+3. Open System Settings › Privacy & Security, scroll down to Security, and click **Open Anyway**
+   beside the note about Oatcake.
+4. Open Oatcake again and choose **Open Anyway**. macOS remembers this, and Oatcake updates itself
+   from then on.
+
+Either way, the first recording asks for microphone and system-audio permission for
 "OatcakeRecorder". Summaries use Claude Code by default: install it and sign in, or pick another
 provider in Settings. The first processing run downloads about 500 MB of models to
 `~/Library/Application Support/Oatcake/models/FluidAudio` (see Speech models).

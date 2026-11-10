@@ -121,7 +121,9 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/a8cteam51/oatcake/trunk/install.sh | sh
             ```
 
-            Installed copies update themselves (Settings › Updates). Oatcake isn't notarised, so a zip downloaded with a browser is blocked by macOS; the install line avoids that. The first recording asks for microphone and system-audio permission for "OatcakeRecorder".
+            Or download the zip below, move Oatcake to your Applications folder and open it. Oatcake isn't notarised, so macOS blocks a copy downloaded with a browser until you click Open Anyway in System Settings › Privacy & Security; the install line avoids that.
+
+            Installed copies update themselves (Settings › Updates). The first recording asks for microphone and system-audio permission for "OatcakeRecorder".
         # --notes goes above the generated list of changes.
         run: gh release create "$GITHUB_REF_NAME" "$ZIP" latest.json --repo "$GITHUB_REPOSITORY" --title "Oatcake $GITHUB_REF_NAME" --generate-notes --notes "$NOTES"
 
