@@ -21,6 +21,8 @@ export function previewOf(summary: string): string {
     if (!line || /^#/.test(line) || /^-{3,}$/.test(line)) continue;
     return line
       .replace(/^[-*]\s+(\[[ xX]\]\s+)?/, "")
+      // Granola escapes Markdown characters ("Updates \& Welcomes").
+      .replace(/\\([\\`*_{}\[\]()#+\-.!~&<>|])/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
       .replace(/\s*\[\d{1,2}:\d\d(?::\d\d)?\]/g, "")
       .replace(/[*_`]/g, "")

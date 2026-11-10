@@ -2,12 +2,13 @@
 import type { Config } from "../core/config.ts";
 import type { TreeNode } from "../core/meetings.ts";
 import type { CalendarCache, CalendarEvent } from "../core/calendar.ts";
+import type { GranolaImport } from "../core/granola.ts";
 import type { Analysis, Progress } from "../core/process.ts";
 import type { InputDevice, Note, Recording, RecorderStatus, StartOptions } from "../core/recordings.ts";
 import type { Decision } from "../core/save.ts";
 
 export type Calendar = CalendarCache & { fetching?: boolean };
-export type { Analysis, CalendarEvent, Config, Decision, InputDevice, Note, Progress, Recording, RecorderStatus, TreeNode };
+export type { Analysis, CalendarEvent, Config, Decision, GranolaImport, InputDevice, Note, Progress, Recording, RecorderStatus, TreeNode };
 
 export type ItemAction = "rename" | "newFolder" | "reveal" | "trash";
 export type SecretName = "anthropic" | "openai" | "calendar";
@@ -56,6 +57,8 @@ export interface Api {
   setSecret(name: SecretName, value: string): Promise<void>;
   /** Picks and saves the Meetings folder; null if cancelled. */
   chooseFolder(): Promise<string | null>;
+  /** Picks Granola's export (.zip or .csv) and imports it; null if cancelled. */
+  importGranola(): Promise<GranolaImport | null>;
   listInputs(): Promise<InputDevice[]>;
   /** Saves the microphone choice and switches any running recording to it. */
   setMic(mic: Config["mic"]): Promise<void>;

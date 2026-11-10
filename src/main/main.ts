@@ -14,6 +14,7 @@ import {
   type CalendarEvent,
 } from "../core/calendar.ts";
 import { DATA_DIR, loadConfig, RECORDINGS_DIR, saveConfig, type Config } from "../core/config.ts";
+import { importGranola } from "../core/granola.ts";
 import { createFolder, folderForEvent, listTodos, listTree, moveItem, readMeeting, renameItem, resolveInside, writeMeetingFile } from "../core/meetings.ts";
 import {
   discardRecording,
@@ -355,6 +356,22 @@ handle("config:chooseFolder", async () => {
   send("config:changed", config);
   send("tree:changed");
   return config.outputDir;
+});
+
+/** Settings › Import from Granola: pick the export, import it, and show the new meetings. */
+handle("granola:import", async () => {
+  const parent = BrowserWindow.getFocusedWindow() ?? win;
+  const options: Electron.OpenDialogOptions = {
+    title: "Import from Granola",
+    buttonLabel: "Import",
+    properties: ["openFile"],
+    filters: [{ name: "Granola export", extensions: ["zip", "csv"] }],
+  };
+  const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  if (picked.canceled || !picked.filePaths[0]) return null;
+  const result = await importGranola(picked.filePaths[0], meetingsRoot());
+  send("tree:changed");
+  return result;
 });
 
 handle("ask:start", (askId: string, rel: string, question: string, sessionId?: string) => {

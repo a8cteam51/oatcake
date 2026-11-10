@@ -110,6 +110,15 @@ export function writeMeetingFile(root: string, rel: string, file: string, conten
   writeAtomic(target, content);
 }
 
+/** A meeting's folder name: "2026-11-05 1400 Weekly sync", in local time. */
+export function meetingFolderName(meta: { title: string; startedAt: string }): string {
+  const d = new Date(meta.startedAt);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const title = meta.title.replace(/[/:\\]/g, "-").trim() || "Call";
+  return `${stamp} ${title}`;
+}
+
 /** A folder name made from free text such as an event title: no "/" or ":". */
 export const safeName = (name: string) => name.replace(/[/:]/g, "-").replace(/\s+/g, " ").trim();
 /** Letters and digits only (any script), for matching names that differ only in punctuation. */

@@ -167,6 +167,16 @@ export function MeetingView(props: {
   const todos = parseTodos(files.todos);
   const open = todos.filter((t) => !t.done).length;
   const granola = meta.source === "granola" || !!props.node.granola;
+  // Granola's CSV export has transcripts without times or names: shown as plain paragraphs.
+  const plain = lines.length ? [] : files.transcript.split("\n").map((l) => l.trim()).filter(Boolean);
+  const granolaNotice = [
+    "Imported from Granola.",
+    !files.notes.trim() && "It didn’t keep your notes.",
+    lines.some((l) => l.speaker === "Call audio" || /^System audio/.test(l.speaker)) && "The names on the call side of its transcript are Granola’s own guesses.",
+    plain.length > 0 && "Its transcript doesn’t say who said what.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const date = meta.startedAt ? new Date(meta.startedAt) : meetingDate(props.node);
   const length = meta.startedAt && meta.endedAt ? (+new Date(meta.endedAt) - +new Date(meta.startedAt)) / 1000 : null;
@@ -228,7 +238,7 @@ export function MeetingView(props: {
           {granola && (
             <div className="notice grey" style={{ marginTop: 14 }}>
               <FileIcon size={14} style={{ marginTop: 1 }} />
-              <span>Imported from Granola. It didn’t keep your notes, and the names on the call side of its transcripts are Granola’s own guesses.</span>
+              <span>{granolaNotice}</span>
             </div>
           )}
           <div style={{ height: 22 }} />
@@ -317,7 +327,12 @@ export function MeetingView(props: {
                   </div>
                 </div>
               ))}
-              {!lines.length && <div className="empty-text" style={{ padding: "0 10px" }}>transcript.md is empty.</div>}
+              {plain.map((p, i) => (
+                <p key={i} className="said plain">
+                  {p}
+                </p>
+              ))}
+              {!lines.length && !plain.length && <div className="empty-text" style={{ padding: "0 10px" }}>transcript.md is empty.</div>}
             </div>
           ) : (
             <div>

@@ -21,6 +21,7 @@ const api: Api = {
   getSecret: invoke("secret:get"),
   setSecret: invoke("secret:set"),
   chooseFolder: invoke("config:chooseFolder"),
+  importGranola: invoke("granola:import"),
   listInputs: invoke("mic:list"),
   setMic: invoke("mic:set"),
   getCalendar: invoke("calendar:get"),
