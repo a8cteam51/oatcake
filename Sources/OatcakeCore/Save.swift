@@ -163,7 +163,7 @@ private let longestParagraph = 30.0
  * Consecutive lines from one speaker read as one paragraph. A long turn breaks at a pause about every
  * half minute, so each part has its own time to jump to (lines arrive split at pauses already).
  */
-private func mergeRuns(_ lines: [Line]) -> [Line] {
+func mergeRuns(_ lines: [Line]) -> [Line] {
     var out: [Line] = []
     for l in lines {
         if let last = out.last, last.speaker == l.speaker, l.start - last.end < 3, l.end - last.start <= longestParagraph {

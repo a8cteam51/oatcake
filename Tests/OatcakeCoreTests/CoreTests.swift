@@ -494,3 +494,51 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
     change(&copy)
     return copy
 }
+
+@Suite struct QuillTests {
+    /// A tiny backup in Quill's shape: two meetings with the same title, one with a named voice, notes and a recording.
+    @Test func importsBackup() throws {
+        let fm = FileManager.default
+        let work = fm.temporaryDirectory.appendingPathComponent("oatcake-quill-test-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: work) }
+        let src = work.appendingPathComponent("backup"), root = work.appendingPathComponent("Meetings")
+        let a = "11111111-1111-1111-1111-111111111111", b = "22222222-2222-2222-2222-222222222222"
+        let audioDir = src.appendingPathComponent("meetings/1767268800000-\(a)")
+        try fm.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        try Data("combined".utf8).write(to: audioDir.appendingPathComponent("\(a)-FINAL-combined.m4a"))
+        try Data("mic".utf8).write(to: audioDir.appendingPathComponent("\(a)-FINAL-mic.m4a"))
+        let transcript = #"{"blocks":[{"from":1767268801000,"to":1767268802000,"text":"Morning.","source":"system","speaker_id":"S1"},{"from":1767268803000,"to":1767268804000,"text":"Hi Sam.","source":"mic","speaker_id":"S2"},{"from":1767268810000,"to":1767268811000,"text":"Who's that?","source":"system","speaker_id":"S3"}]}"#
+        _ = try runCapturing("/usr/bin/sqlite3", [src.appendingPathComponent("quill.db").path, """
+            CREATE TABLE Meeting (id TEXT, start DATETIME, "end" DATETIME, audio_transcript TEXT, title TEXT, folder TEXT,
+                deleteDate DATETIME, hidden BOOLEAN, eventTitle TEXT, manualTitle TEXT);
+            CREATE TABLE Note (id TEXT, meeting_id TEXT, title TEXT, body TEXT, createdAt DATETIME);
+            CREATE TABLE ContactMeeting (contact_id TEXT, speaker_id TEXT, meeting_id TEXT, suggested_name TEXT);
+            CREATE TABLE Contact (id TEXT, name TEXT);
+            INSERT INTO Meeting VALUES ('\(a)', 1767268800000, 1767268870000, '\(transcript.replacingOccurrences(of: "'", with: "''"))', 'Planning', '1767268800000-\(a)', NULL, NULL, NULL, NULL);
+            INSERT INTO Meeting VALUES ('\(b)', 1767355200000, NULL, NULL, 'Planning', NULL, NULL, NULL, NULL, NULL);
+            INSERT INTO Note VALUES ('n1', '\(a)', 'Minutes', '## Plans &amp; dates' || char(10) || char(10) || '#### 2m' || char(10) || '- Ship it', 1);
+            INSERT INTO Contact VALUES ('c1', 'Sam Lee');
+            INSERT INTO ContactMeeting VALUES ('c1', 'S1', '\(a)', NULL);
+            """])
+        let zip = work.appendingPathComponent("QuillBackup.zip")
+        _ = try runCapturing("/usr/bin/ditto", ["-c", "-k", src.path, zip.path])
+
+        let first = try importQuill(zip, into: root, me: "Alex")
+        #expect(first.imported == 2 && first.skipped == 0 && first.unreadable == 0)
+        let series = root.appendingPathComponent("Quill/Planning")
+        let folders = try fm.contentsOfDirectory(atPath: series.path).sorted()
+        #expect(folders.count == 2)
+        let meeting = series.appendingPathComponent(folders[0])
+        #expect(readText(meeting.appendingPathComponent("transcript.md")) ==
+                "**[00:01] Sam Lee:** Morning.\n\n**[00:03] Alex:** Hi Sam.\n\n**[00:10] Voice 1:** Who's that?\n")
+        #expect(readText(meeting.appendingPathComponent("summary.md")) == "## Plans & dates\n\n- Ship it\n")
+        #expect(readText(meeting.appendingPathComponent("audio.m4a")) == "combined")
+        let meta = try JSONDecoder().decode(MeetingMeta.self, from: Data(contentsOf: meeting.appendingPathComponent("meeting.json")))
+        #expect(meta.title == "Planning" && meta.source == "quill" && meta.participants == ["Sam Lee", "Alex"] && meta.endedAt != nil)
+        // The meeting without a recording or notes still comes in, with just its transcript and meeting.json.
+        #expect(try fm.contentsOfDirectory(atPath: series.appendingPathComponent(folders[1]).path).sorted() == ["meeting.json", "transcript.md"])
+
+        let again = try importQuill(zip, into: root, me: "Alex")
+        #expect(again.imported == 0 && again.skipped == 2)
+    }
+}

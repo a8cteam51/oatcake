@@ -375,14 +375,29 @@ final class AppModel {
     }
 
     /// Settings › Import from Granola: pick the export, import it, and show the new meetings.
-    func importGranolaExport() async throws -> GranolaImport? {
+    func importGranolaExport(progress: @escaping ImportProgress) async throws -> ImportResult? {
         let panel = NSOpenPanel()
         panel.title = "Import from Granola"
         panel.prompt = "Import"
         panel.allowedContentTypes = [.zip, .commaSeparatedText]
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         let root = meetings.root
-        let result = try await Task.detached { try importGranola(url, into: root) }.value
+        progress(0, 0)
+        let result = try await Task.detached { try importGranola(url, into: root, progress: progress) }.value
+        refresh()
+        return result
+    }
+
+    /// Settings › Import from Quill: pick Quill's backup, import it, and show the new meetings.
+    func importQuillBackup(progress: @escaping ImportProgress) async throws -> ImportResult? {
+        let panel = NSOpenPanel()
+        panel.title = "Import from Quill"
+        panel.prompt = "Import"
+        panel.allowedContentTypes = [.zip]
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        let root = meetings.root, me = config.myName
+        progress(0, 0)
+        let result = try await Task.detached { try importQuill(url, into: root, me: me, progress: progress) }.value
         refresh()
         return result
     }

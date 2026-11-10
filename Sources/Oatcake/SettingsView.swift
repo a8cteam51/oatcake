@@ -80,7 +80,10 @@ struct SettingsView: View {
             }
         }
         Section("Import") {
-            GranolaRow()
+            ImportRow(source: "Granola", hint: "Pick the .zip from Granola’s export. Each note becomes a meeting; ones already here are skipped.",
+                      pick: model.importGranolaExport)
+            ImportRow(source: "Quill", hint: "Pick the .zip from Quill’s backup. Each meeting becomes a meeting, with its recording; ones already here are skipped.",
+                      pick: model.importQuillBackup)
         }
     }
 
@@ -310,10 +313,14 @@ private struct TestRow: View {
     }
 }
 
-/// Settings › Storage › Import from Granola: the export's notes become meetings in a Granola folder.
-private struct GranolaRow: View {
-    @Environment(AppModel.self) private var model
+/// Settings › Storage › Import from Granola or Quill: the export's meetings go into a folder named after it.
+private struct ImportRow: View {
+    let source: String
+    let hint: String
+    let pick: (@escaping ImportProgress) async throws -> ImportResult?
     @ViewState private var running = false
+    /// Meetings handled and how many there are: set once a file is picked, 0 of 0 until the export has been read.
+    @ViewState private var progress: (done: Int, total: Int)?
     @ViewState private var text: String?
     @ViewState private var failed = false
 
@@ -321,22 +328,31 @@ private struct GranolaRow: View {
         LabeledContent {
             Button(running ? "Importing…" : "Import…") { Task { await run() } }.disabled(running)
         } label: {
-            Text("Import from Granola")
-            Text(text ?? "Pick the .zip from Granola’s export. Each note becomes a meeting; ones already here are skipped.")
-                .foregroundStyle(failed ? Color.red : Color.secondary)
+            Text("Import from \(source)")
+            if running, let progress, progress.total == 0 {
+                ProgressView { Text("Reading the export…").foregroundStyle(.secondary) }.progressViewStyle(.linear)
+            } else if running, let progress {
+                ProgressView(value: Double(progress.done), total: Double(progress.total)) {
+                    Text("Importing \(progress.done) of \(progress.total) meetings…").foregroundStyle(.secondary)
+                }
+            } else {
+                Text(text ?? hint)
+                    .foregroundStyle(failed ? Color.red : Color.secondary)
+            }
         }
     }
 
     private func run() async {
         running = true
-        defer { running = false }
+        defer { running = false; progress = nil }
         func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
         do {
-            guard let r = try await model.importGranolaExport() else { return }
+            // On the main queue, in order, as the import reports from its background task.
+            guard let r = try await pick({ done, total in DispatchQueue.main.async { progress = (done, total) } }) else { return }
             failed = false
             text = [r.imported > 0 ? "Imported \(plural(r.imported, "meeting")) into the \(r.folder) folder." : "Nothing new to import.",
                     r.skipped > 0 ? "\(plural(r.skipped, "meeting")) already here." : nil,
-                    r.unreadable > 0 ? "\(plural(r.unreadable, "row")) couldn't be read." : nil].compactMap { $0 }.joined(separator: " ")
+                    r.unreadable > 0 ? "\(plural(r.unreadable, "meeting")) couldn't be read." : nil].compactMap { $0 }.joined(separator: " ")
         } catch {
             failed = true
             text = error.localizedDescription
