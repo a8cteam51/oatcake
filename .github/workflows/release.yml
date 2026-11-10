@@ -60,6 +60,12 @@ jobs:
           security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
           rm "$RUNNER_TEMP/signing.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          # codesign on the runner only finds identities in keychains on the search list.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -p codesigning "$keychain"
+          # Fail here rather than after the build if the identity can't sign.
+          cp /usr/bin/true "$RUNNER_TEMP/sign-test"
+          codesign --force --sign "Oatcake Release" --keychain "$keychain" "$RUNNER_TEMP/sign-test"
           echo "OATCAKE_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
       # No package install scripts run, apart from Electron's own download.
