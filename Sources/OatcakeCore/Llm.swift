@@ -176,8 +176,14 @@ public enum ChildProcess {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        process.environment = ShellEnvironment.childEnvironment()
-        if let directory { process.currentDirectoryURL = directory }
+        var environment = ShellEnvironment.childEnvironment()
+        if let directory {
+            process.currentDirectoryURL = directory
+            // Claude Code takes its working folder (which Ask's file tools are confined to) from PWD,
+            // not only from the process's actual directory.
+            environment["PWD"] = directory.path
+        }
+        process.environment = environment
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.standardInput = stdin
         process.standardOutput = stdout
