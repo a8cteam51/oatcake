@@ -1,0 +1,160 @@
+import Foundation
+
+/// What the user decided for one speaker in review.
+public enum Decision: Sendable, Equatable {
+    case name(String)
+    case merge(into: String)
+    case mixed
+    case ignore
+}
+
+/// A voiceprint needs this much of one person's speech to be worth keeping.
+private let minVoiceprintSeconds = 30.0
+
+/// "Voice 1", "Voice 2"… in the order review lists them (most talking first).
+public func voiceLabel(_ analysis: Analysis, _ id: String) -> String {
+    "Voice \((analysis.speakers.firstIndex { $0.id == id } ?? -1) + 1)"
+}
+
+public func loadAnalysis(_ rec: Recording) throws -> Analysis {
+    try readJSON(Analysis.self, rec.dir.appendingPathComponent("analysis.json"))
+}
+
+/**
+ * Writes the meeting folder (summary.md, transcript.md, notes.md, todo.md, meeting.json) into
+ * `folder` (relative to the Meetings folder), saves confirmed voiceprints, and returns the meeting's
+ * path relative to the Meetings folder.
+ */
+public func saveMeeting(_ config: Config, _ rec: Recording, decisions: [String: Decision], folder: String,
+                        onStep: (String) -> Void) async throws -> String {
+    let analysis = try loadAnalysis(rec)
+    let notes = Recordings.loadNotes(rec.id)
+
+    /// The decision a voice ends up with once merges are followed (nil for your microphone).
+    func settled(_ id: String, _ seen: Set<String> = []) -> (id: String, decision: Decision?)? {
+        if id == me { return nil }
+        let d = decisions[id]
+        if case .merge(let into) = d, !seen.contains(id) { return settled(into, seen.union([id])) }
+        return (id, d)
+    }
+    func nameOf(_ id: String) -> String? {
+        guard let s = settled(id) else { return config.myName }
+        switch s.decision {
+        case .ignore: return nil
+        case .mixed: return "Several people"
+        case .name(let name) where !name.trimmed.isEmpty: return name.trimmed
+        default:
+            // Unnamed, or (shouldn't happen) no decision at all: keep the lines under a neutral label.
+            return analysis.speakers.contains { $0.id == s.id } ? voiceLabel(analysis, s.id) : "Call audio"
+        }
+    }
+    /// Only a name typed or accepted in review is worth remembering: not "Voice 2", "Several people" or you.
+    func rememberedName(_ id: String) -> String? {
+        if case .name(let name)? = settled(id)?.decision, !name.trimmed.isEmpty { return name.trimmed }
+        return nil
+    }
+
+    let named = analysis.lines.compactMap { line -> Line? in
+        nameOf(line.speaker).map { Line(speaker: $0, start: line.start, end: line.end, text: line.text) }
+    }
+    let paragraphs = mergeRuns(named)
+    var participants: [String] = []
+    for name in [config.myName] + paragraphs.map(\.speaker) where name != "Several people" && !participants.contains(name) {
+        participants.append(name)
+    }
+    let transcript = paragraphs.map { "**[\(clock($0.start))] \($0.speaker):** \($0.text)" }.joined(separator: "\n\n") + "\n"
+
+    onStep("Writing the summary")
+    let (summary, todo) = try await summarise(config, title: analysis.title, participants: participants, notes: notes, transcript: transcript)
+
+    let startedAt = parseISO(analysis.startedAt) ?? rec.startedAt
+    let name = meetingFolderName(title: analysis.title, startedAt: startedAt)
+    let outRel = folder.isEmpty ? name : folder + "/" + name
+    let out = try resolveInside(config.meetingsRoot, outRel)
+    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    try transcript.write(to: out.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
+    try summary.write(to: out.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+    if !todo.isEmpty { try todo.write(to: out.appendingPathComponent("todo.md"), atomically: true, encoding: .utf8) }
+    if !notes.isEmpty { try notesMarkdown(notes).write(to: out.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8) }
+    struct Meta: Encodable {
+        var title: String
+        var startedAt: String
+        var endedAt: String
+        var participants: [String]
+        var recording: String
+    }
+    try (try encodeJSON(Meta(title: analysis.title, startedAt: analysis.startedAt, endedAt: analysis.endedAt,
+                             participants: participants, recording: rec.id)) + "\n")
+        .write(to: out.appendingPathComponent("meeting.json"), atomically: true, encoding: .utf8)
+
+    // Only now the meeting is written, so a failed summary that's retried doesn't add the same voices twice.
+    // Fingerprints from another model (an analysis made by the Electron version) aren't kept.
+    onStep("Saving voiceprints")
+    if analysis.embeddingModel == voiceprintModel {
+        try addVoiceprints(analysis.speakers.compactMap { s in
+            guard let name = rememberedName(s.id), let embedding = s.embedding, s.seconds >= minVoiceprintSeconds else { return nil }
+            return (name, embedding)
+        }, call: rec.id)
+    }
+
+    try writeAtomic(rec.dir.appendingPathComponent("saved.json"), try encodeJSON(["meeting": outRel]) + "\n")
+    if !config.keepAudio { Recordings.deleteAudio(rec) }
+    return outRel
+}
+
+private func mergeRuns(_ lines: [Line]) -> [Line] {
+    var out: [Line] = []
+    for l in lines {
+        if let last = out.last, last.speaker == l.speaker, l.start - last.end < 3 {
+            out[out.count - 1].text += " " + l.text
+            out[out.count - 1].end = l.end
+        } else {
+            out.append(l)
+        }
+    }
+    return out
+}
+
+/// "- [12:34] point", or "- point" for a prep note written before the call.
+private func notesMarkdown(_ notes: [Note]) -> String {
+    notes.map { n in n.at.map { "- [\(clock($0))] \(n.text)" } ?? "- \(n.text)" }.joined(separator: "\n") + "\n"
+}
+
+private let todoMarker = "=== TO-DOS ==="
+
+/// Writes summary.md's body and todo.md's to-dos in one model call.
+private func summarise(_ config: Config, title: String, participants: [String], notes: [Note], transcript: String) async throws -> (String, String) {
+    // The notes stay the note-taker's own (notes.md). Here they only tell the model what mattered.
+    let notesBlock = notes.isEmpty ? "" : ([
+        "\(config.myName) took these notes ([mm:ss] = time into the call; \"before the call\" = prep written",
+        "beforehand). They are kept separately, so don't copy them into the summary. Treat them as a signal",
+        "of what mattered most to the note-taker: cover those topics fully, with the details from the",
+        "transcript around each timestamp, and keep everything else brief.",
+    ] + notes.map { "[\($0.at.map(clock) ?? "before the call")] \($0.text)" }).joined(separator: "\n")
+
+    let reply = try await makeLlm(config.llm).complete(
+        system: "You write concise, accurate meeting notes in Markdown. Use only facts from the transcript and notes. "
+            + "Name who said or decided what. Follow the reply format exactly.",
+        prompt: [
+            "Meeting: \(title)",
+            "Participants: \(participants.joined(separator: ", "))",
+            "",
+            notesBlock,
+            "",
+            "Reply in two parts.",
+            "1. The summary: organised by topic under your own '##' headings, starting at the first '##'.",
+            "   Leave action items out of it; they go in part 2. You may cite a moment as [mm:ss].",
+            "2. A line reading exactly \(todoMarker), then one line per action item agreed in the call:",
+            "   - [ ] What to do — Owner — due <date, only if one was stated, e.g. Fri, Oct 30> — [mm:ss]",
+            "   Owner is the person's name as in the transcript; leave out any part that isn't known, and",
+            "   [mm:ss] is when it was agreed. If nothing was agreed, write nothing after the marker.",
+            "",
+            "Transcript:",
+            transcript,
+        ].joined(separator: "\n"))
+    let parts = reply.components(separatedBy: todoMarker)
+    let todos = (parts.count > 1 ? parts[1] : "").components(separatedBy: "\n")
+        .filter { $0.range(of: #"^\s*[-*]\s+\[( |x|X)\]\s+\S"#, options: .regularExpression) != nil }
+        .map(\.trimmed)
+    return (parts[0].trimmed + "\n", todos.isEmpty ? "" : todos.joined(separator: "\n") + "\n")
+}
