@@ -24,9 +24,23 @@ struct OatcakeApp: App {
     }
 }
 
-/// File › New Recording, and Edit › Find in Transcript and Search Meetings.
+/// What File › Move to Trash does. The meeting list sets it while it has the keyboard; anywhere else
+/// there's nothing to do, the command is off, and ⌘⌫ keeps its usual meaning (in a text field, say).
+struct TrashMeetingsKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var trashMeetings: (() -> Void)? {
+        get { self[TrashMeetingsKey.self] }
+        set { self[TrashMeetingsKey.self] = newValue }
+    }
+}
+
+/// File › New Recording and Move to Trash, and Edit › Find in Transcript and Search Meetings.
 struct AppCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.trashMeetings) private var trashMeetings
     let model: AppModel
 
     var body: some Commands {
@@ -38,6 +52,9 @@ struct AppCommands: Commands {
             // The sidebar's own buttons for these sit in section headers, out of reach of the keyboard and VoiceOver.
             Button("New Folder") { model.wantsNewFolder = true; model.showWindow() }.keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Refresh Calendar") { model.refreshCalendar(force: true) }.keyboardShortcut("r").disabled(model.calendar == nil)
+            Divider()
+            // As in Finder. A menu command, because a key handler on the list didn't answer to ⌘⌫.
+            Button("Move to Trash") { trashMeetings?() }.keyboardShortcut(.delete, modifiers: .command).disabled(trashMeetings == nil)
         }
         CommandGroup(after: .pasteboard) {
             Divider()
