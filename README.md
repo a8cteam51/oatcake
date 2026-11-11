@@ -180,11 +180,14 @@ Granola. The folder holds:
 - `transcript.md`, with times and speakers: your microphone is you, and voices on the call carry
   the names Quill matched to them, or "Voice 1", "Voice 2"…
 - `summary.md`, made from Quill's notes on the meeting, if it wrote any.
-- `audio.m4a`, the combined recording. Quill's separate mic and system tracks are left out.
+- `audio.m4a`, the combined recording, when **Keep call audio** is on in Settings › Storage (turn
+  it on before importing if you want the recordings). Quill's separate mic and system tracks are
+  left out.
 - `meeting.json`, with the start and end times and the people named in the transcript.
 
-Quill's search index (`vector_store.db`), contacts, threads and settings aren't imported. Importing
-again skips meetings already there. The import is in `Sources/OatcakeCore/Quill.swift`.
+Quill's search index (`vector_store.db`), contacts, threads and settings aren't imported, and
+neither is a meeting with nothing in it (no words, notes or recording). Importing again skips
+meetings already there. The import is in `Sources/OatcakeCore/Quill.swift`.
 
 ## What's next
 

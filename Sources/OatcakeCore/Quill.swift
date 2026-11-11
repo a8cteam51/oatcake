@@ -1,8 +1,9 @@
 // Imports Quill's backup: a .zip holding quill.db (SQLite) and a meetings/ folder with each meeting's
 // recordings. Each meeting becomes a meeting folder under a "Quill" folder: transcript.md (from
 // Quill's speaker-labelled transcript), summary.md (Quill's notes, when it made any), audio.m4a (the
-// combined recording; the separate mic and system tracks are left out) and meeting.json. Meetings that
-// share a title are grouped in a subfolder. A meeting already in the Meetings folder is skipped.
+// combined recording, when call audio is kept; the separate mic and system tracks are left out) and
+// meeting.json. Meetings that share a title are grouped in a subfolder. A meeting already in the
+// Meetings folder is skipped, and so is one with nothing in it (no words, notes or recording).
 
 import Foundation
 
@@ -60,7 +61,12 @@ private func query<T: Decodable>(_ db: URL, _ sql: String) throws -> [T] {
  * to each voice, or "Voice 1", "Voice 2"… Times count from the start of the recording.
  */
 func quillTranscript(_ json: String, start: Double, me: String, names: [String: String]) -> (markdown: String, participants: [String]) {
+    // In the order things were said, whatever order the backup lists them in (kept as it is between equals).
     let blocks = ((try? JSONDecoder().decode(QuillTranscript.self, from: Data(json.utf8)))?.blocks ?? []).compactMap(\.block)
+        .enumerated().sorted { ($0.element.from ?? 0, $0.offset) < ($1.element.from ?? 0, $1.offset) }.map(\.element)
+    // A recording that began before the meeting's start time counts from its first line, so the lines
+    // before the start keep their order and spacing rather than all landing on 00:00.
+    let start = min(start, blocks.compactMap(\.from).min() ?? start)
     var voices: [String] = []
     let lines = blocks.compactMap { b -> Line? in
         guard let from = b.from, let text = b.text?.trimmed, !text.isEmpty else { return nil }
@@ -84,12 +90,13 @@ func quillTranscript(_ json: String, start: Double, me: String, names: [String: 
     return (markdown, participants)
 }
 
-/// Quill's notes on one meeting, one after another. Its minute markers ("#### 2m") are dropped, and
-/// the HTML entities some notes carry are turned back into characters.
+/// Quill's notes on one meeting, one after another. Its minute markers ("#### 2m", "#### 1h 2m") are
+/// dropped (a heading of your own at another level is kept), and the HTML entities some notes carry
+/// are turned back into characters.
 func quillSummary(_ notes: [(title: String?, body: String?)]) -> String {
     let written = notes.compactMap { n -> (title: String, body: String)? in
         let body = (n.body ?? "")
-            .replacingOccurrences(of: #"(?m)^#{1,6}\s+\d+m\s*$\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^####[ \t]+(?:\d+h(?:[ \t]*\d+m)?|\d+m)[ \t]*$\n?"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&amp;", with: "&")
@@ -102,14 +109,25 @@ func quillSummary(_ notes: [(title: String?, body: String?)]) -> String {
     return parts.isEmpty ? "" : parts.joined(separator: "\n\n") + "\n"
 }
 
-public func importQuill(_ file: URL, into root: URL, me: String, progress: ImportProgress = { _, _ in }) throws -> ImportResult {
+/// `keepAudio` is Settings › Storage › Keep call audio: without it the recordings stay in the backup.
+public func importQuill(_ file: URL, into root: URL, me: String, keepAudio: Bool = true, progress: ImportProgress = { _, _ in }) throws -> ImportResult {
     guard file.pathExtension.lowercased() == "zip" else { throw OatcakeError("Pick the .zip that Quill’s backup made.") }
     let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-quill-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: tmp) }
     let db = tmp.appendingPathComponent("quill.db")
     // The database now; each meeting's combined recording as it's imported (the mic and system tracks are left in the zip).
-    _ = try? runCapturing("/usr/bin/unzip", ["-qq", "-o", file.path, "quill.db", "-d", tmp.path])
-    guard FileManager.default.exists(db) else { throw OatcakeError("That .zip has no quill.db in it. Is it the backup Quill made?") }
+    var unzipSaid = ""
+    do {
+        _ = try runCapturing("/usr/bin/unzip", ["-qq", "-o", file.path, "quill.db", "-d", tmp.path])
+    } catch {
+        unzipSaid = error.localizedDescription
+    }
+    guard FileManager.default.exists(db) else {
+        // unzip says "filename not matched" when the archive is fine and the database isn't at its top level.
+        throw OatcakeError(unzipSaid.isEmpty || unzipSaid.contains("not matched")
+            ? "That .zip has no quill.db at its top level. Is it the backup as Quill made it?"
+            : "That .zip couldn’t be opened. It may be incomplete or damaged.")
+    }
 
     let meetings: [QuillMeeting]
     let notes: [QuillNote]
@@ -178,16 +196,18 @@ public func importQuill(_ file: URL, into root: URL, me: String, progress: Impor
         if !summary.isEmpty { files["summary.md"] = summary }
         // The folder name comes from the backup: only a plain name is followed.
         var moving: [String: URL] = [:]
-        if let folder = m.folder, !folder.isEmpty, !folder.contains("/"), !folder.hasPrefix("."),
-           // A meeting without a recording is fine (unzip exits non-zero when nothing matches).
-           (try? runCapturing("/usr/bin/unzip", ["-qq", "-o", file.path, "meetings/\(folder)/*-combined.m4a", "-d", tmp.path])) != nil,
-           // Quill names the finished recording "<id>-FINAL-<start>-<end>-combined.m4a": that one if there are
-           // several, else the first by name, so the pick doesn't depend on the order the folder lists in.
-           let found = try? FileManager.default.contentsOfDirectory(at: tmp.appendingPathComponent("meetings/\(folder)"), includingPropertiesForKeys: nil)
-               .filter({ $0.lastPathComponent.hasSuffix("-combined.m4a") }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }),
-           let audio = found.first(where: { $0.lastPathComponent.contains("-FINAL-") }) ?? found.first {
-            moving["audio.m4a"] = audio
+        if keepAudio, let folder = m.folder, !folder.isEmpty, !folder.contains("/"), !folder.hasPrefix(".") {
+            // What's there afterwards is the test, not unzip's exit status: that's non-zero when nothing
+            // matches (a meeting without a recording) and also after a mere warning with the file extracted.
+            _ = try? runCapturing("/usr/bin/unzip", ["-qq", "-o", file.path, "meetings/\(folder)/*-combined.m4a", "-d", tmp.path])
+            // Quill names the finished recording "<id>-FINAL-<start>-<end>-combined.m4a": that one if there are
+            // several, else the first by name, so the pick doesn't depend on the order the folder lists in.
+            let found = ((try? FileManager.default.contentsOfDirectory(at: tmp.appendingPathComponent("meetings/\(folder)"), includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.lastPathComponent.hasSuffix("-combined.m4a") }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            if let audio = found.first(where: { $0.lastPathComponent.contains("-FINAL-") }) ?? found.first { moving["audio.m4a"] = audio }
         }
+        // A row with nothing to show for it (an event Quill listed and never recorded) isn't a meeting.
+        if transcript.trimmed.isEmpty, summary.isEmpty, moving.isEmpty { continue }
         let series = (titles[title] ?? 0) > 1 ? seriesFolder(title) : ""
         do {
             try writeImported(root, base: [quillFolder, series].filter { !$0.isEmpty }.joined(separator: "/"),

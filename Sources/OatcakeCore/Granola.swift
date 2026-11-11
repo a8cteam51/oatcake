@@ -163,6 +163,8 @@ public func importGranola(_ file: URL, into root: URL, progress: ImportProgress 
     for r in rows { titles[titleOf(r), default: 0] += 1 }
 
     var result = ImportResult()
+    // Why the first note that couldn't be written couldn't be.
+    var failure: Error?
     for (i, r) in rows.enumerated() {
         defer { progress(i + 1, rows.count) }
         let id = (r["document_id"] ?? "").trimmed.lowercased()
@@ -187,10 +189,19 @@ public func importGranola(_ file: URL, into root: URL, progress: ImportProgress 
                      "transcript.md": transcriptMarkdown(r["transcript"] ?? ""),
                      "meeting.json": try encodeJSON(Meta(title: title, startedAt: isoString(started), granolaNote: noteURL + id)) + "\n"]
         if let notes = r["notes"]?.trimmed, !notes.isEmpty { files["notes.md"] = notes + "\n" }
-        try writeImported(root, base: [granolaFolder, series].filter { !$0.isEmpty }.joined(separator: "/"),
-                          title: title, startedAt: started, files: files)
+        // One that can't be written (a title too long for a folder name, say) is counted and passed over.
+        do {
+            try writeImported(root, base: [granolaFolder, series].filter { !$0.isEmpty }.joined(separator: "/"),
+                              title: title, startedAt: started, files: files)
+        } catch {
+            if failure == nil { failure = error }
+            result.unreadable += 1
+            continue
+        }
         known.insert(id)
         result.imported += 1
     }
+    // Nothing could be written at all: say why.
+    if result.imported == 0, result.skipped == 0, let failure { throw failure }
     return result
 }

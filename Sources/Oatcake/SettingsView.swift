@@ -82,7 +82,8 @@ struct SettingsView: View {
         Section("Import") {
             ImportRow(source: "Granola", hint: "Pick the .zip from Granola’s export. Each note becomes a meeting; ones already here are skipped.",
                       pick: model.importGranolaExport)
-            ImportRow(source: "Quill", hint: "Pick the .zip from Quill’s backup. Each meeting becomes a meeting, with its recording; ones already here are skipped.",
+            ImportRow(source: "Quill", hint: "Pick the .zip from Quill’s backup. Each meeting becomes a meeting; ones already here are skipped. "
+                        + (model.config.keepAudio ? "Recordings come too." : "Recordings stay behind unless “Keep call audio” is on."),
                       pick: model.importQuillBackup)
         }
     }
@@ -382,6 +383,7 @@ private struct ModelRow: View {
 
 /// Settings › Storage › Import from Granola or Quill: the export's meetings go into a folder named after it.
 private struct ImportRow: View {
+    @Environment(AppModel.self) private var model
     let source: String
     let hint: String
     let pick: (@escaping ImportProgress) async throws -> ImportResult?
@@ -393,7 +395,9 @@ private struct ImportRow: View {
 
     var body: some View {
         LabeledContent {
-            Button(running ? "Importing…" : "Import…") { Task { await run() } }.disabled(running)
+            // One import at a time: the model knows of one that this row, if it was made afresh since, doesn't.
+            Button(running || model.importing == source ? "Importing…" : "Import…") { Task { await run() } }
+                .disabled(running || model.importing != nil)
         } label: {
             Text("Import from \(source)")
             if running, let progress, progress.total == 0 {
