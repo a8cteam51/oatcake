@@ -223,8 +223,8 @@ public final class ModelDownload: NSObject, URLSessionDataDelegate, @unchecked S
 
 /**
  * Runs llama.cpp's server for one model: started when something needs the model, on this Mac's own
- * address and a port nobody else is using, with a key made up for the occasion so no other program
- * can use it. One at a time. A request that needs a bigger window (or the other model) waits for the
+ * address and a port nobody else is using, with a key made up for the occasion, so that a web page
+ * or another account on the Mac can't use it. One at a time. A request that needs a bigger window (or the other model) waits for the
  * requests under way to finish, then restarts it.
  */
 public actor ModelServer {
@@ -285,7 +285,7 @@ public actor ModelServer {
 
         let port = try Self.freePort()
         let key = UUID().uuidString
-        var arguments = ["-m", LocalModels.file(model).path, "--host", "127.0.0.1", "--port", String(port), "--api-key", key,
+        var arguments = ["-m", LocalModels.file(model).path, "--host", "127.0.0.1", "--port", String(port),
                          "-c", String(context), "-ngl", "99", "-fa", "on", "--no-context-shift", "--no-webui", "--jinja", "-np", "1",
                          // A long call on a slow Mac can take longer to write up than llama.cpp's ten minutes.
                          "--timeout", "3600"]
@@ -296,7 +296,8 @@ public actor ModelServer {
         let server = Process()
         server.executableURL = binary
         server.arguments = arguments
-        server.environment = ShellEnvironment.childEnvironment()
+        // The key goes in its environment: a command line can be read by every account on the Mac.
+        server.environment = ShellEnvironment.childEnvironment().merging(["LLAMA_API_KEY": key]) { $1 }
         server.standardInput = FileHandle.nullDevice
         // What it says as it starts goes in a log, to be quoted if it doesn't.
         let log = try? FileHandle(forWritingTo: Self.log)

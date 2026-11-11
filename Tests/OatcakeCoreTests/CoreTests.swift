@@ -791,6 +791,10 @@ private struct TestMeetings {
         // B's name was never said, C's is your own, and Z wasn't asked about.
         #expect(names == ["A": Suggestion(name: "Priya", how: .transcript, detail: "Priya, where are we")])
         #expect(namesIn(#"{"speakers":[{"speaker":"A","name":"null","quote":"null"},{"speaker":"B","name":"Speaker B","quote":null}]}"#, unknown: ["A", "B"], transcript: transcript, myName: "Sam Taylor").isEmpty)
+        // Said means said as a word: "Dan" isn't in "abundant", and "Ann" isn't in "announce". A name in two parts is.
+        let said = "Sam Taylor (recorder): Jean-Luc, the evidence is abundant.\nSpeaker A: I will announce it.\nSpeaker B: Fine."
+        let made = #"{"speakers":[{"speaker":"A","name":"Dan","quote":null},{"speaker":"B","name":"Ann","quote":null},{"speaker":"C","name":"Jean-Luc","quote":"Jean-Luc, the evidence"}]}"#
+        #expect(namesIn(made, unknown: ["A", "B", "C"], transcript: said, myName: "Sam Taylor").mapValues(\.name) == ["C": "Jean-Luc"])
 
         // From a processed recording: the voice nobody recognised gets its name, one that was recognised keeps its own.
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-names-\(UUID().uuidString)")

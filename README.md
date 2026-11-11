@@ -374,8 +374,9 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   it has got, downloads it on request and removes it.
 - **What runs it.** llama.cpp's server, inside Oatcake.app (MIT; the build is named in
   `Scripts/bundle.sh`). Oatcake starts it when there's something to write, on 127.0.0.1 at a port
-  picked for the occasion, with a key made up each time so no other program can use it, and stops
-  it after ten minutes with nothing to do, which gives its memory back.
+  picked for the occasion, with a key made up each time so that a web page or another account on
+  the Mac can't use it, and stops it after ten minutes with nothing to do, which gives its memory
+  back.
 - **How it's asked.** As Qwen advises for these models: its own sampling settings, never greedy
   decoding and room for a long reply. Whether it reasons before it replies is set for each task
   (Settings › Summaries): on to start with for summaries, name suggestions and Ask, where it

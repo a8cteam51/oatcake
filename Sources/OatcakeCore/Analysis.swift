@@ -303,7 +303,9 @@ func namesIn(_ reply: String, unknown: [String], transcript: String, myName: Str
         var speakers: [Guess]
     }
     guard let parsed = try? parseJsonObject(Reply.self, reply) else { return [:] }
-    let heard = foldedForSearch(transcript)
+    // Whole words: "Dan" isn't said by a transcript that has "abundant" in it.
+    func words(_ text: String) -> [Substring] { foldedForSearch(text).split { !$0.isLetter && !$0.isNumber } }
+    let heard = Set(words(transcript))
     let mine = Set(foldedForSearch(myName).split(separator: " "))
     var names: [String: Suggestion] = [:]
     for guess in parsed.speakers {
@@ -312,7 +314,7 @@ func namesIn(_ reply: String, unknown: [String], transcript: String, myName: Str
         let folded = foldedForSearch(name)
         guard !["null", "none", "unknown", "n/a", "full name", "the name"].contains(folded), !folded.hasPrefix("speaker"),
               !Set(folded.split(separator: " ")).isSubset(of: mine),
-              folded.split(separator: " ").allSatisfy({ heard.contains($0) }) else { continue }
+              !words(name).isEmpty, words(name).allSatisfy(heard.contains) else { continue }
         let quote = guess.quote?.trimmed ?? ""
         names[id] = Suggestion(name: name, how: .transcript, detail: ["null", "none"].contains(quote.lowercased()) ? "" : quote)
     }

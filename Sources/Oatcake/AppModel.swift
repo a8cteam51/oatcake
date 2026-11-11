@@ -946,7 +946,12 @@ final class AppModel {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(300))
         }
-        try await download.value
+        do {
+            try await download.value
+        } catch where isCancellation(error) {
+            // The download was stopped (in Settings), not what was waiting for it.
+            throw OatcakeError(modelNotDownloadedMessage)
+        }
     }
 
     // MARK: - Status
