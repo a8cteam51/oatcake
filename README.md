@@ -170,6 +170,24 @@ Granola's export has no speaker names or timestamps in its transcripts, so they 
 paragraphs, and it has no participants or end times. The import is in
 `Sources/OatcakeCore/Granola.swift`.
 
+## Importing from Quill
+
+Make a backup in Quill (it gives you a `QuillBackup-<date>.zip`), then in Oatcake open
+Settings › Storage › **Import from Quill…** and pick the `.zip`. Each meeting becomes a meeting
+folder under a **Quill** folder, with meetings that share a title grouped in a subfolder as for
+Granola. The folder holds:
+
+- `transcript.md`, with times and speakers: your microphone is you, and voices on the call carry
+  the names Quill matched to them, or "Voice 1", "Voice 2"…
+- `summary.md`, made from Quill's notes on the meeting, if it wrote any.
+- `audio.m4a`, the combined recording, whatever **Keep call audio** is set to. Quill's separate
+  mic and system tracks are left out.
+- `meeting.json`, with the start and end times and the people named in the transcript.
+
+Quill's search index (`vector_store.db`), contacts, threads and settings aren't imported, and
+neither is a meeting with nothing in it (no words, notes or recording). Importing again skips
+meetings already there. The import is in `Sources/OatcakeCore/Quill.swift`.
+
 ## What's next
 
 None of this is built yet. It's what we'd like to add, in no fixed order.
@@ -513,7 +531,7 @@ alike.
 
 - `Sources/OatcakeRecorder/` — system-audio + mic recorder (helper app)
 - `Sources/OatcakeCore/` — recordings, speech pipeline, voiceprints, the language model and its
-  download, summaries, meeting folders, calendar, Granola import, Ask, updates
+  download, summaries, meeting folders, calendar, Granola and Quill imports, Ask, updates
 - `Sources/Oatcake/` — the app (SwiftUI); `--analyse` runs the analysis helper
 - `Tests/OatcakeCoreTests/` — tests, including the calendar against ical.js's output
 - `Scripts/` — bundling, versioning, signing `latest.json`

@@ -406,15 +406,38 @@ final class AppModel {
         refresh()
     }
 
+    /// What's being imported ("Granola", "Quill"), if anything. Kept here rather than in the Settings
+    /// row, which starts afresh if its window is closed and opened again: one import at a time.
+    var importing: String?
+
     /// Settings › Import from Granola: pick the export, import it, and show the new meetings.
-    func importGranolaExport() async throws -> GranolaImport? {
+    func importGranolaExport(progress: @escaping ImportProgress) async throws -> ImportResult? {
         let panel = NSOpenPanel()
         panel.title = "Import from Granola"
         panel.prompt = "Import"
         panel.allowedContentTypes = [.zip, .commaSeparatedText]
-        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        guard importing == nil, panel.runModal() == .OK, let url = panel.url else { return nil }
+        importing = "Granola"
+        defer { importing = nil }
         let root = meetings.root
-        let result = try await Task.detached { try importGranola(url, into: root) }.value
+        progress(0, 0)
+        let result = try await Task.detached { try importGranola(url, into: root, progress: progress) }.value
+        refresh()
+        return result
+    }
+
+    /// Settings › Import from Quill: pick Quill's backup, import it, and show the new meetings.
+    func importQuillBackup(progress: @escaping ImportProgress) async throws -> ImportResult? {
+        let panel = NSOpenPanel()
+        panel.title = "Import from Quill"
+        panel.prompt = "Import"
+        panel.allowedContentTypes = [.zip]
+        guard importing == nil, panel.runModal() == .OK, let url = panel.url else { return nil }
+        importing = "Quill"
+        defer { importing = nil }
+        let root = meetings.root, me = config.myName
+        progress(0, 0)
+        let result = try await Task.detached { try importQuill(url, into: root, me: me, progress: progress) }.value
         refresh()
         return result
     }
@@ -1006,6 +1029,7 @@ final class AppModel {
         if !active.isEmpty { return "Oatcake is recording a call. Install the update after you stop." }
         if !analysing.isEmpty { return "Oatcake is analysing a call. Install the update when it's done." }
         if !summarising.isEmpty { return "Oatcake is writing a summary. Try again in a moment." }
+        if importing != nil { return "Oatcake is importing meetings. Install the update when it's done." }
         return nil
     }
 }
