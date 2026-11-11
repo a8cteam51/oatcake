@@ -82,8 +82,7 @@ struct SettingsView: View {
         Section("Import") {
             ImportRow(source: "Granola", hint: "Pick the .zip from Granola’s export. Each note becomes a meeting; ones already here are skipped.",
                       pick: model.importGranolaExport)
-            ImportRow(source: "Quill", hint: "Pick the .zip from Quill’s backup. Each meeting becomes a meeting; ones already here are skipped. "
-                        + (model.config.keepAudio ? "Recordings come too." : "Recordings stay behind unless “Keep call audio” is on."),
+            ImportRow(source: "Quill", hint: "Pick the .zip from Quill’s backup. Each meeting becomes a meeting, with its recording; ones already here are skipped.",
                       pick: model.importQuillBackup)
         }
     }

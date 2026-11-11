@@ -1,9 +1,10 @@
 // Imports Quill's backup: a .zip holding quill.db (SQLite) and a meetings/ folder with each meeting's
 // recordings. Each meeting becomes a meeting folder under a "Quill" folder: transcript.md (from
 // Quill's speaker-labelled transcript), summary.md (Quill's notes, when it made any), audio.m4a (the
-// combined recording, when call audio is kept; the separate mic and system tracks are left out) and
-// meeting.json. Meetings that share a title are grouped in a subfolder. A meeting already in the
-// Meetings folder is skipped, and so is one with nothing in it (no words, notes or recording).
+// combined recording; the separate mic and system tracks are left out) and meeting.json. The
+// recording always comes across, whatever Keep call audio is set to: the backup may be the only copy.
+// Meetings that share a title are grouped in a subfolder. A meeting already in the Meetings folder
+// is skipped, and so is one with nothing in it (no words, notes or recording).
 
 import Foundation
 
@@ -109,8 +110,7 @@ func quillSummary(_ notes: [(title: String?, body: String?)]) -> String {
     return parts.isEmpty ? "" : parts.joined(separator: "\n\n") + "\n"
 }
 
-/// `keepAudio` is Settings › Storage › Keep call audio: without it the recordings stay in the backup.
-public func importQuill(_ file: URL, into root: URL, me: String, keepAudio: Bool = true, progress: ImportProgress = { _, _ in }) throws -> ImportResult {
+public func importQuill(_ file: URL, into root: URL, me: String, progress: ImportProgress = { _, _ in }) throws -> ImportResult {
     guard file.pathExtension.lowercased() == "zip" else { throw OatcakeError("Pick the .zip that Quill’s backup made.") }
     let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-quill-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: tmp) }
@@ -196,7 +196,7 @@ public func importQuill(_ file: URL, into root: URL, me: String, keepAudio: Bool
         if !summary.isEmpty { files["summary.md"] = summary }
         // The folder name comes from the backup: only a plain name is followed.
         var moving: [String: URL] = [:]
-        if keepAudio, let folder = m.folder, !folder.isEmpty, !folder.contains("/"), !folder.hasPrefix(".") {
+        if let folder = m.folder, !folder.isEmpty, !folder.contains("/"), !folder.hasPrefix(".") {
             // What's there afterwards is the test, not unzip's exit status: that's non-zero when nothing
             // matches (a meeting without a recording) and also after a mere warning with the file extracted.
             _ = try? runCapturing("/usr/bin/unzip", ["-qq", "-o", file.path, "meetings/\(folder)/*-combined.m4a", "-d", tmp.path])

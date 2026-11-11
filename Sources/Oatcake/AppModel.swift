@@ -435,9 +435,9 @@ final class AppModel {
         guard importing == nil, panel.runModal() == .OK, let url = panel.url else { return nil }
         importing = "Quill"
         defer { importing = nil }
-        let root = meetings.root, me = config.myName, keepAudio = config.keepAudio
+        let root = meetings.root, me = config.myName
         progress(0, 0)
-        let result = try await Task.detached { try importQuill(url, into: root, me: me, keepAudio: keepAudio, progress: progress) }.value
+        let result = try await Task.detached { try importQuill(url, into: root, me: me, progress: progress) }.value
         refresh()
         return result
     }

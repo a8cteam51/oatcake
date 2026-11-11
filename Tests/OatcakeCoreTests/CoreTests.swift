@@ -993,11 +993,6 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
 
         let again = try importQuill(zip, into: root, me: "Alex")
         #expect(again.imported == 0 && again.skipped == 2)
-
-        // With call audio not kept (Settings › Storage), the recording stays in the backup.
-        let lean = work.appendingPathComponent("Lean")
-        #expect(try importQuill(zip, into: lean, me: "Alex", keepAudio: false).imported == 2)
-        #expect(try fm.contentsOfDirectory(atPath: lean.appendingPathComponent("Quill/Planning/\(folders[0])").path).sorted() == ["meeting.json", "summary.md", "transcript.md"])
     }
 
     /// What a real backup may hold that a tidy one doesn't: rows that belong to nothing, a transcript
