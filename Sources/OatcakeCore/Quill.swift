@@ -33,17 +33,24 @@ private struct QuillSpeaker: Decodable {
 
 private struct QuillTranscript: Decodable {
     struct Block: Decodable {
-        var from: Double
-        var to: Double
-        var text: String
+        var from: Double?
+        var to: Double?
+        var text: String?
         var source: String?
         var speaker_id: String?
     }
-    var blocks: [Block]
+    /// One that isn't in this shape is nil, so it's left out without taking the rest with it.
+    struct Entry: Decodable {
+        var block: Block?
+        init(from decoder: Decoder) throws { block = try? Block(from: decoder) }
+    }
+    var blocks: [Entry]
 }
 
 private func query<T: Decodable>(_ db: URL, _ sql: String) throws -> [T] {
-    let out = try runCapturing("/usr/bin/sqlite3", ["-readonly", "-json", db.path, sql])
+    // "-init /dev/null": without it sqlite3 reads your own ~/.sqliterc, and a setting there (".timer on",
+    // ".echo on") adds lines to what it prints, which then isn't JSON.
+    let out = try runCapturing("/usr/bin/sqlite3", ["-init", "/dev/null", "-readonly", "-json", db.path, sql])
     // No rows prints nothing at all.
     return out.trimmed.isEmpty ? [] : try JSONDecoder().decode([T].self, from: Data(out.utf8))
 }
@@ -53,11 +60,10 @@ private func query<T: Decodable>(_ db: URL, _ sql: String) throws -> [T] {
  * to each voice, or "Voice 1", "Voice 2"… Times count from the start of the recording.
  */
 func quillTranscript(_ json: String, start: Double, me: String, names: [String: String]) -> (markdown: String, participants: [String]) {
-    let blocks = (try? JSONDecoder().decode(QuillTranscript.self, from: Data(json.utf8)))?.blocks ?? []
+    let blocks = ((try? JSONDecoder().decode(QuillTranscript.self, from: Data(json.utf8)))?.blocks ?? []).compactMap(\.block)
     var voices: [String] = []
     let lines = blocks.compactMap { b -> Line? in
-        let text = b.text.trimmed
-        guard !text.isEmpty else { return nil }
+        guard let from = b.from, let text = b.text?.trimmed, !text.isEmpty else { return nil }
         let id = b.speaker_id ?? ""
         let speaker: String
         if b.source == "mic" {
@@ -68,7 +74,7 @@ func quillTranscript(_ json: String, start: Double, me: String, names: [String: 
             if !voices.contains(id) { voices.append(id) }
             speaker = "Voice \(voices.firstIndex(of: id)! + 1)"
         }
-        return Line(speaker: speaker, start: max(0, (b.from - start) / 1000), end: max(0, (b.to - start) / 1000), text: text)
+        return Line(speaker: speaker, start: max(0, (from - start) / 1000), end: max(0, ((b.to ?? from) - start) / 1000), text: text)
     }
     var participants: [String] = []
     // Only the "Voice n" labels made up above are left out, not a name Quill matched that happens to look like one.
@@ -81,17 +87,18 @@ func quillTranscript(_ json: String, start: Double, me: String, names: [String: 
 /// Quill's notes on one meeting, one after another. Its minute markers ("#### 2m") are dropped, and
 /// the HTML entities some notes carry are turned back into characters.
 func quillSummary(_ notes: [(title: String?, body: String?)]) -> String {
-    let parts = notes.compactMap { n -> String? in
+    let written = notes.compactMap { n -> (title: String, body: String)? in
         let body = (n.body ?? "")
             .replacingOccurrences(of: #"(?m)^#{1,6}\s+\d+m\s*$\n?"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&amp;", with: "&")
             .trimmed
-        guard !body.isEmpty else { return nil }
-        let title = (n.title ?? "").trimmed
-        return notes.count > 1 && !title.isEmpty ? "# \(title)\n\n\(body)" : body
+        return body.isEmpty ? nil : ((n.title ?? "").trimmed, body)
     }
+    // Each note under its title when there are several. "##", as in Oatcake's own summaries: a summary
+    // that starts with a "# " line is read as an older file's title block, and shown without it.
+    let parts = written.map { written.count > 1 && !$0.title.isEmpty ? "## \($0.title)\n\n\($0.body)" : $0.body }
     return parts.isEmpty ? "" : parts.joined(separator: "\n\n") + "\n"
 }
 
@@ -109,16 +116,18 @@ public func importQuill(_ file: URL, into root: URL, me: String, progress: Impor
     let speakers: [QuillSpeaker]
     do {
         meetings = try query(db, """
-            SELECT id, coalesce(nullif(trim(manualTitle), ''), nullif(trim(title), ''), nullif(trim(eventTitle), '')) AS title,
+            SELECT CAST(id AS TEXT) AS id, coalesce(nullif(trim(manualTitle), ''), nullif(trim(title), ''), nullif(trim(eventTitle), '')) AS title,
                    iif(typeof(start) IN ('integer', 'real'), start, NULL) AS start, iif(typeof("end") IN ('integer', 'real'), "end", NULL) AS "end",
                    folder, audio_transcript AS transcript
-            FROM Meeting WHERE deleteDate IS NULL AND coalesce(hidden, 0) = 0 ORDER BY start
+            FROM Meeting WHERE id IS NOT NULL AND deleteDate IS NULL AND coalesce(hidden, 0) = 0 ORDER BY start
             """)
-        notes = try query(db, "SELECT meeting_id AS meeting, title, body FROM Note ORDER BY createdAt")
+        // A note or a voice that belongs to no meeting is left out here: one such row would otherwise stop the whole import.
+        notes = try query(db, "SELECT CAST(meeting_id AS TEXT) AS meeting, title, body FROM Note WHERE meeting_id IS NOT NULL ORDER BY createdAt")
         speakers = try query(db, """
-            SELECT cm.meeting_id AS meeting, cm.speaker_id AS speaker, coalesce(nullif(trim(c.name), ''), nullif(trim(cm.suggested_name), '')) AS name
+            SELECT CAST(cm.meeting_id AS TEXT) AS meeting, CAST(cm.speaker_id AS TEXT) AS speaker, coalesce(nullif(trim(c.name), ''), nullif(trim(cm.suggested_name), '')) AS name
             FROM ContactMeeting cm LEFT JOIN Contact c ON c.id = cm.contact_id
-            WHERE coalesce(nullif(trim(c.name), ''), nullif(trim(cm.suggested_name), '')) IS NOT NULL
+            WHERE cm.meeting_id IS NOT NULL AND cm.speaker_id IS NOT NULL
+              AND coalesce(nullif(trim(c.name), ''), nullif(trim(cm.suggested_name), '')) IS NOT NULL
             """)
     } catch {
         throw OatcakeError("Couldn’t read Quill’s database (\(error.localizedDescription)). Is it a backup from a recent Quill?")
@@ -132,6 +141,8 @@ public func importQuill(_ file: URL, into root: URL, me: String, progress: Impor
     for m in meetings { titles[titleOf(m), default: 0] += 1 }
 
     var result = ImportResult(folder: quillFolder)
+    // Why the first meeting that couldn't be written couldn't be.
+    var failure: Error?
     progress(0, meetings.count)
     for (i, m) in meetings.enumerated() {
         defer { progress(i + 1, meetings.count) }
@@ -154,10 +165,15 @@ public func importQuill(_ file: URL, into root: URL, me: String, progress: Impor
             var source = "quill"
             var quillMeeting: String
         }
-        var files = ["transcript.md": transcript,
-                     "meeting.json": try encodeJSON(Meta(title: title, startedAt: isoString(Date(timeIntervalSince1970: start / 1000)),
-                                                         endedAt: m.end.map { isoString(Date(timeIntervalSince1970: $0 / 1000)) },
-                                                         participants: participants, quillMeeting: id)) + "\n"]
+        // A meeting that can't be written (a title too long for a folder name, say) is counted and passed
+        // over: the ones after it still come in, on this run and the next.
+        guard let meta = try? encodeJSON(Meta(title: title, startedAt: isoString(Date(timeIntervalSince1970: start / 1000)),
+                                              endedAt: m.end.map { isoString(Date(timeIntervalSince1970: $0 / 1000)) },
+                                              participants: participants, quillMeeting: id)) else {
+            result.unreadable += 1
+            continue
+        }
+        var files = ["transcript.md": transcript, "meeting.json": meta + "\n"]
         let summary = quillSummary((notesOf[m.id] ?? []).map { ($0.title, $0.body) })
         if !summary.isEmpty { files["summary.md"] = summary }
         // The folder name comes from the backup: only a plain name is followed.
@@ -173,10 +189,18 @@ public func importQuill(_ file: URL, into root: URL, me: String, progress: Impor
             moving["audio.m4a"] = audio
         }
         let series = (titles[title] ?? 0) > 1 ? seriesFolder(title) : ""
-        try writeImported(root, base: [quillFolder, series].filter { !$0.isEmpty }.joined(separator: "/"),
-                          title: title, startedAt: Date(timeIntervalSince1970: start / 1000), files: files, moving: moving)
+        do {
+            try writeImported(root, base: [quillFolder, series].filter { !$0.isEmpty }.joined(separator: "/"),
+                              title: title, startedAt: Date(timeIntervalSince1970: start / 1000), files: files, moving: moving)
+        } catch {
+            if failure == nil { failure = error }
+            result.unreadable += 1
+            continue
+        }
         known.insert(id)
         result.imported += 1
     }
+    // Nothing could be written at all (no room, or the Meetings folder can't be written to): say why.
+    if result.imported == 0, result.skipped == 0, let failure { throw failure }
     return result
 }
