@@ -345,7 +345,7 @@ private struct FolderRow: View {
             Button("New Folder Inside…") { draft = ""; newFolderIn = node.path }
             Button("Show in Finder") { model.reveal(node.path) }
             Divider()
-            Button("Move to Trash") { model.trash(node) }
+            Button("Move to Trash") { model.trash([node]) }
         }
     }
 }

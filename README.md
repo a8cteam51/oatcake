@@ -22,9 +22,9 @@ flowchart TD
         prints[("voiceprints.json")]
     end
 
-    guess["Claude: guesses names for voices<br/>with no match, from the transcript"]
+    guess["Qwen3, on this Mac: suggests names for voices<br/>with no match, from the transcript"]
     review["3 · Review (you)<br/>listen to clips, confirm names,<br/>merge or mark mixed"]
-    summary["Claude: writes the summary and to-dos<br/>from the transcript, focused by your notes"]
+    summary["Qwen3, on this Mac: writes the summary and to-dos<br/>from the transcript, focused by your notes"]
     folder["4 · Meeting folder<br/>summary.md · todo.md · transcript.md · notes.md · meeting.json"]
 
     mic --> asr
@@ -47,12 +47,14 @@ flowchart TD
     class guess,summary llm
 ```
 
-Everything runs on this Mac except the two orange steps. Silero, Parakeet, pyannote and
-WeSpeaker are small speech models (Parakeet is 0.6B parameters), run on the Neural Engine
+Everything runs on this Mac, and nothing from a call is sent anywhere. Silero, Parakeet, pyannote
+and WeSpeaker are small speech models (Parakeet is 0.6B parameters), run on the Neural Engine
 through [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML builds: they turn
-audio into text and voices into fingerprints, take no prompts, and can't write anything else. Claude is
-the only language model, and it only ever sees text (the transcript and your notes),
-never audio.
+audio into text and voices into fingerprints, take no prompts, and can't write anything else. The
+two orange steps are the only language model: Qwen3, which Oatcake downloads once and runs itself
+with [llama.cpp](https://github.com/ggml-org/llama.cpp) (see Language model). It only ever sees
+text (the transcript and your notes), never audio. You can point Oatcake at a model server of
+your own, on your Mac or your network, instead.
 
 The window has three columns: the sidebar (a recording in progress, Upcoming from your
 calendar, Needs review, and your folders), the meetings in the selected folder, and the
@@ -60,7 +62,9 @@ meeting itself. Settings (⌘,) is its own window, in panes; changes apply as yo
 ⌘N starts a new recording, ⌥⌘F searches every meeting from the box above the meeting list (its
 title, folder, summary, to-dos, notes and transcript; a meeting found by its text shows the line
 with the words and opens there), and ⌘F finds words in the transcript you're reading. ⇧⌘N makes a
-folder and ⌘R refreshes the calendar; all of these are in the File and Edit menus.
+folder and ⌘R refreshes the calendar; all of these are in the File and Edit menus. ⌘- or
+⇧-click selects several meetings in the list, and right-click or File › Move to Trash (⌘⌫) moves
+them all to the Trash.
 
 1. **Record.** New recording, or click an event under Upcoming. Pick the folder (a calendar
    event picks the folder named like it, or the one its earlier meetings are in, or offers a
@@ -120,8 +124,8 @@ folder and ⌘R refreshes the calendar; all of these are in the File and Edit me
    notes, untouched; prep notes have no time) and `meeting.json` (title, times,
    participants). Saving doesn't involve the summary model: the meeting is written straight
    away with its transcript and notes, and its summary and to-dos are written in the background
-   and appear in the meeting when they're ready. If the model can't be reached (Claude Code
-   signed out, no network, a local server that's down), the meeting says why in plain words
+   and appear in the meeting when they're ready. If the summary can't be written (the model's
+   download was interrupted, a server of your own that's down), the meeting says why in plain words
    (the raw message is behind Details) and shows **Write summary** to try again later. Your notes
    steer what the summary focuses on but aren't copied into it. A long turn in the transcript is
    broken at a pause about every half minute, each part with its own time.
@@ -142,12 +146,15 @@ folder and ⌘R refreshes the calendar; all of these are in the File and Edit me
    its title (in `meeting.json`) and its folder's name, which keeps its date.
 5. **Ask.** The lozenge at the bottom of a meeting takes questions about it ("what did we
    decide about hiring?") or across meetings ("when did Alex first raise the launch date?").
-   It runs Claude Code (`claude -p`) in your Meetings folder with read-only file tools
-   (Read, Grep, Glob) that may only open files inside that folder: no shell, no MCP servers,
-   no personal settings. Answers link to the meetings they draw on; click one to open it.
+   The model on your Mac is given the meeting you have open, whole: its summary, to-dos, your
+   notes and the transcript. It's first asked whether the question reaches beyond that meeting.
+   When it does, Oatcake searches your other meetings for the names and topics the model gives,
+   looks at the earlier meetings in the same folder, and adds their summaries, to-dos and the
+   transcript lines that match. The model never opens a file or runs anything itself. Answers
+   link to the meetings they draw on, and a time in an answer opens the transcript at that moment.
    Web links in an answer are shown as text, not made clickable. Follow-ups continue the same conversation,
-   which stays open as you move between meetings, until New chat. Expect 10–60 seconds
-   and some Claude usage per question; the meeting text Claude reads is sent to Anthropic.
+   which stays open as you move between meetings, until New chat. The first question about a call
+   takes longest, while the model reads it; follow-ups about the same call are quicker.
 
 ## Importing from Granola
 
@@ -204,8 +211,6 @@ None of this is built yet. It's what we'd like to add, in no fixed order.
 **Finding things**
 
 - Saved questions for Ask, and choosing the folder or person it looks through.
-- Ask with any of the summary providers, not only Claude Code.
-- Times in an Ask answer that jump to that moment in the transcript.
 - A page for each person: the meetings they were in and the to-dos they own.
 - A way for other tools and assistants to read your meetings (an MCP server over the Meetings
   folder).
@@ -248,9 +253,12 @@ any time to reinstall.
    from then on.
 
 Either way, the first recording asks for microphone and system-audio permission for
-"OatcakeRecorder". Summaries use Claude Code by default: install it and sign in, or pick another
-provider in Settings. The first processing run downloads about 500 MB of models to
-`~/Library/Application Support/Oatcake/models/FluidAudio` (see Speech models).
+"OatcakeRecorder". There's nothing to sign in to and no key to paste: the models run on your Mac,
+and Oatcake fetches them itself during your first call, into
+`~/Library/Application Support/Oatcake/models`. The language model that writes summaries starts
+downloading when you start recording (Qwen3 8B, 5.0 GB, on a Mac with 16 GB of memory or more;
+Qwen3 4B, 2.5 GB, on one with 8 GB), and the speech models (about 500 MB) when the call is
+processed. See Speech models and Language model.
 
 ## Updates
 
@@ -282,7 +290,7 @@ isn't needed.
 ```sh
 swift build                  # debug build of everything
 swift test                   # the core's tests
-Scripts/bundle.sh            # build/Oatcake.app, release build, recorder inside
+Scripts/bundle.sh            # build/Oatcake.app, release build, recorder and llama.cpp inside
 Scripts/bundle.sh debug      # the same, debug build
 ```
 
@@ -292,6 +300,11 @@ Oatcake's Keychain items, to the signature: an ad-hoc build is a new app to macO
 (so it asks again), and only a release-signed copy can update itself. The Dock badge counts
 recordings waiting under Needs review. The icon is `assets/icon.svg`; `assets/Oatcake.icns` is
 built from `assets/icon.png` with `iconutil`.
+
+`Scripts/bundle.sh` also puts llama.cpp's server in the app: one fixed build from llama.cpp's
+releases, downloaded once into `.build/llama` and checked against its SHA-256. A copy run straight
+from `swift build` has no llama.cpp beside it; point `OATCAKE_LLAMA_DIR` at a folder that holds
+`llama-server` and its libraries (`build/Oatcake.app/Contents/Resources/llama` will do).
 
 To try a build without touching your own recordings, settings and voiceprints, point it at
 another data folder (and set a different Meetings folder in its Settings):
@@ -341,8 +354,9 @@ publishing it, serve a folder holding a zip and its `latest.json` and start Oatc
 `OATCAKE_UPDATE_FEED=http://127.0.0.1:8000/latest.json`; `install.sh` takes `OATCAKE_FEED` the
 same way. With either, the zip is fetched from beside the manifest.
 
-Three more environment variables help when trying things out: `OATCAKE_DATA_DIR` points a
-development copy at another data folder (not another Keychain: don't type real keys into one);
+Four more environment variables help when trying things out: `OATCAKE_DATA_DIR` points a
+development copy at another data folder (not another Keychain: don't save a real calendar address in one);
+`OATCAKE_LLAMA_DIR` names the folder llama.cpp's server is in, for a copy that isn't a bundle;
 `OATCAKE_CALENDAR_URL` gives it a calendar address without saving one (a local `.ics` served over
 HTTP will do); and `OATCAKE_CALL_APPS` names a file listing the apps to treat as on a call, one
 per line, so the call notice and the automatic stop can be tried without making a call.
@@ -363,13 +377,52 @@ speaker separation on a known meeting.
 | Parakeet Ultra (post-trained v3) | 25 European languages | CC-BY-4.0 |
 | pyannote community-1 segmentation and embedding | speaker turns and voice fingerprints | CC-BY-4.0 |
 
+## Language model
+
+Summaries, to-dos, name suggestions and Ask's answers come from one model, run on this Mac.
+
+| Model | For | Download | Licence |
+| --- | --- | --- | --- |
+| Qwen3 8B (Q4_K_M) | Macs with 16 GB of memory or more; the default there | 5.0 GB | Apache-2.0 |
+| Qwen3 4B (Q4_K_M) | Macs with 8 GB; fine on short calls, loses detail on long ones | 2.5 GB | Apache-2.0 |
+
+- **Where it comes from.** Qwen's own GGUF files on Hugging Face, at a fixed revision, checked
+  against their SHA-256 before use (`LocalModels` in `Sources/OatcakeCore/LocalModel.swift`). A
+  download that's interrupted carries on from where it stopped. Settings › Summaries shows how far
+  it has got, downloads it on request and removes it.
+- **What runs it.** llama.cpp's server, inside Oatcake.app (MIT; the build is named in
+  `Scripts/bundle.sh`). Oatcake starts it when there's something to write, on 127.0.0.1 at a port
+  picked for the occasion, with a key made up each time so that a web page or another account on
+  the Mac can't use it, and stops it after ten minutes with nothing to do, which gives its memory
+  back.
+- **How it's asked.** As Qwen advises for these models: its own sampling settings, never greedy
+  decoding and room for a long reply. Whether it reasons before it replies is set for each task
+  (Settings › Summaries): on to start with for summaries, name suggestions and Ask, where it
+  measured better (decisions given to the right person, fewer invented names, answers that keep
+  to the question), and off for to-dos, which lost detail with it. The summary and the to-dos are
+  two requests about the same transcript, each with its task after the transcript; the to-dos,
+  the name suggestions and Ask's first step come back as JSON the server holds to a schema. The
+  summary's instructions are yours to change (Settings › Summaries).
+- **How much it reads at once.** As little as the job needs, up to what this Mac's memory allows
+  (the 8B takes about 5 GB plus 0.14 GB for every thousand tokens; an hour's call is around
+  12,000). Qwen3 reads 32,768 tokens natively; a longer call stretches that with YaRN, by no more
+  than it needs. A call too long for this Mac is summarised in parts, which are then joined.
+- **A model of your own.** Any server with the same chat API on this Mac or your network (Ollama,
+  LM Studio, your own llama.cpp). Oatcake only talks to a local address, and sends no key.
+
+Changing the model or llama.cpp's build is a deliberate change, like the speech models: change the
+revision and checksum together, then check summaries, to-dos and names on a known call.
+
 ## Moving from the Electron version (0.3 and earlier)
 
 0.4.0 is the same app rebuilt in Swift, with the same bundle ID, certificate and update feed, so
 0.3.0 updates to it in place. The first launch:
 
-- moves the API keys and calendar address from `secrets.json` (Electron's encrypted store) into
-  your Keychain, then deletes `secrets.json`;
+- moves the calendar address from `secrets.json` (Electron's encrypted store) into your
+  Keychain, then deletes `secrets.json`;
+- drops the keys for the Anthropic API and for an OpenAI-compatible service, if you'd saved
+  either: summaries are written by a model on your Mac now. Settings that named Claude become the
+  model recommended for your Mac; a model server on your own Mac or network carries over;
 - deletes the old sherpa-onnx models (about 700 MB) and Electron's `Chromium` cache folder;
 - keeps everything else as it was: `config.json`, the Meetings folder, recordings waiting for
   review, and `calendar.json`.
@@ -384,13 +437,21 @@ afresh.
 
 Settings in the app (stored in `~/Library/Application Support/Oatcake/config.json`):
 
-- **Summaries and name suggestions:** Claude through Claude Code (`claude -p`, uses your
-  Claude Code sign-in; model and effort), Claude through the Anthropic API, or any
-  OpenAI-compatible endpoint such as a local Ollama. Each provider keeps its own settings.
-  API keys typed in Settings are kept in your login Keychain, not in `config.json`. Settings
-  shows only that a key is saved and its last four characters; it can replace or remove one but
-  never read it back. Claude Code never sees these keys: it always uses its own sign-in. Add a
-  provider in `Sources/OatcakeCore/Llm.swift`.
+- **Language model** (Settings › Summaries): what writes summaries and to-dos, suggests names and
+  answers questions. Qwen3 8B or Qwen3 4B, which Oatcake downloads and runs on this Mac (the one
+  that suits its memory is chosen to start with, and marked), or a model server of your own:
+  Ollama, LM Studio or another with the same chat API (`http://localhost:11434/v1` for Ollama).
+  Its address has to be this Mac, a machine on your network or a private IP address, and no key
+  is sent to it. **Download Now** fetches the chosen model straight away rather than at your first
+  call, **Remove** deletes it, and **Test** asks it for one word. See Language model.
+- **Summary instructions** (Settings › Summaries): what the model is told to write once it has
+  read the transcript. Change the headings, the level of detail or the language to suit you;
+  **Restore Default** brings Oatcake's own back. To-dos are collected separately and aren't
+  affected.
+- **Reasoning** (Settings › Summaries): whether the model thinks a task through before it
+  replies, with a switch each for summaries, to-dos, name suggestions and Ask. On is slower and
+  not always better; it starts on for everything except to-dos. The switches are for Oatcake's
+  own models: a server of yours decides for itself.
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
 - **Keep call audio** (Settings › Storage): off by default; audio is deleted once a meeting is saved.
@@ -404,8 +465,8 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   **Forget** stops it recognising them. Meetings already saved keep the names they were saved
   with.
 - **Calendar:** paste your calendar's private iCal address (Google Calendar › Settings › your
-  calendar › Integrate calendar › "Secret address in iCal format"). It's kept in the Keychain
-  with the API keys. Oatcake fetches it once an
+  calendar › Integrate calendar › "Secret address in iCal format"). It's kept in your login
+  Keychain, not in `config.json`, and Settings shows only that one is saved. Oatcake fetches it once an
   hour, or when you press ↻ next to Upcoming, and keeps events from yesterday to two weeks
   ahead in `calendar.json`. Upcoming in the sidebar lists the rest of today and tomorrow
   (events you declined are left out). Clicking one starts a new recording named after it, in
@@ -434,6 +495,14 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
 - Summaries and answers are drawn as Markdown with any HTML shown as text. Links in Ask's answers
   to anything but a meeting are shown as text, not made clickable.
 - Speech models are fetched from pinned commits (see Speech models).
+- The language model and the program that runs it are fixed builds, each checked against its
+  SHA-256 before use. Its server listens only on this Mac's own address, at a port picked each
+  time, behind a key made up each time, and is told nothing but text: it can't open files, run
+  commands or reach the network through Oatcake. A model server of your own has to be at a local
+  address (see Language model).
+- What's said on a call ends up in front of the model, so its replies are treated as text from a
+  stranger: a suggested name is only offered if it was said in the call, to-dos and Ask's first
+  step are held to a fixed shape, and links are handled as above.
 - Updates are installed only from a `latest.json` signed with Oatcake's release key, only if the
   zip matches its checksum, and only if the new app carries the running app's code-signing
   identity (see Updates).
@@ -459,8 +528,8 @@ alike.
 ## Layout
 
 - `Sources/OatcakeRecorder/` — system-audio + mic recorder (helper app)
-- `Sources/OatcakeCore/` — recordings, speech pipeline, voiceprints, summaries, meeting folders,
-  calendar, Granola and Quill imports, Ask, updates
+- `Sources/OatcakeCore/` — recordings, speech pipeline, voiceprints, the language model and its
+  download, summaries, meeting folders, calendar, Granola and Quill imports, Ask, updates
 - `Sources/Oatcake/` — the app (SwiftUI); `--analyse` runs the analysis helper
 - `Tests/OatcakeCoreTests/` — tests, including the calendar against ical.js's output
 - `Scripts/` — bundling, versioning, signing `latest.json`
@@ -468,4 +537,5 @@ alike.
 ## License
 
 GPL-3.0-or-later (`LICENSE`). The recorder's audio tap and the echo check are adapted from
-OpenWhispr, under its MIT license; FluidAudio is Apache-2.0 (`THIRD_PARTY_NOTICES.md`).
+OpenWhispr, under its MIT license; FluidAudio is Apache-2.0; llama.cpp, inside the app, is MIT
+(`THIRD_PARTY_NOTICES.md`).

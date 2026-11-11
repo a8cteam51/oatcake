@@ -337,6 +337,24 @@ public func safeName(_ name: String) -> String {
         .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmed
 }
 
+/// A meeting's title: the one in meeting.json, or its folder's name without the date it starts with.
+func titleOfMeeting(_ rel: String, _ meta: MeetingMeta) -> String {
+    meta.title ?? (rel as NSString).lastPathComponent.replacingOccurrences(of: #"^\d{4}-\d{2}-\d{2} \d{4} "#, with: "", options: .regularExpression)
+}
+
+/// "Team 51 – Leads sync · Oct 29" for the folder "…/2026-10-29 1630 Team 51 – Leads sync": what a
+/// link to a meeting reads as. nil for a folder that isn't named like a meeting.
+public func meetingLinkText(_ rel: String) -> String? {
+    let name = rel.split(separator: "/").last.map(String.init) ?? rel
+    let regex = try! NSRegularExpression(pattern: #"^\d{4}-(\d\d)-(\d\d)(?: \d{4})? (.+)$"#)
+    guard let m = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+          let month = Range(m.range(at: 1), in: name).flatMap({ Int(name[$0]) }),
+          let day = Range(m.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
+          let title = Range(m.range(at: 3), in: name).map({ String(name[$0]) }), (1...12).contains(month) else { return nil }
+    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return "\(title.replacingOccurrences(of: "]", with: "\\]")) · \(months[month - 1]) \(day)"
+}
+
 /// Letters and digits only (any script), for matching names that differ only in punctuation.
 public func loose(_ name: String) -> String {
     String(name.lowercased().unicodeScalars.filter { CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0) }.map(Character.init))

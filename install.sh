@@ -147,10 +147,7 @@ main() {
     say ""
     say "Installed Oatcake $VERSION in $DEST_DIR."
     say "The first recording asks for microphone and system-audio permission for \"OatcakeRecorder\"; allow both."
-    if ! command -v claude >/dev/null 2>&1; then
-        say "Summaries use Claude Code, which isn't installed here: install it (https://claude.com/claude-code),"
-        say "or add an Anthropic API key in Oatcake > Settings."
-    fi
+    say "Summaries are written on this Mac. Oatcake downloads the model for them (2.5 to 5 GB) during your first call."
     say "Oatcake checks for updates itself from now on (Settings > Updates)."
 }
 

@@ -394,7 +394,8 @@ struct MeetingView: View {
         if model.summarising.contains(path) {
             Notice(tone: .blue) {
                 Text("Writing the summary…").fontWeight(.semibold)
-                Text("The transcript and your notes are already saved.")
+                Text(model.modelDownloadStatus.map { "\($0). The summary is written as soon as it’s here; the transcript and your notes are already saved." }
+                     ?? "The transcript and your notes are already saved.")
             }
         } else {
             let error = model.summaryErrors[path]
@@ -407,7 +408,7 @@ struct MeetingView: View {
                 }
                 HStack(spacing: 10) {
                     Button("Write summary") { model.writeSummary(path) }
-                    // What stopped it is usually put right in Settings: the model, its sign-in or key.
+                    // What stopped it is usually put right in Settings: the model, or its download.
                     if error != nil { SettingsLink { Text("Open Settings") }.buttonStyle(.link).simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("summaries", forKey: "settingsPane") }) }
                 }
                 .padding(.top, 6)

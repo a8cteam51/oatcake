@@ -66,7 +66,8 @@ jobs:
 
       - run: swift test
 
-      # Builds the app and the recorder, bundles them and signs both (Scripts/bundle.sh).
+      # Builds the app and the recorder, bundles them with llama.cpp's server (a fixed build, checked
+      # against its SHA-256) and signs the lot (Scripts/bundle.sh).
       - name: Package
         env:
           OATCAKE_SIGN_IDENTITY: Oatcake Release
@@ -74,12 +75,13 @@ jobs:
         run: Scripts/bundle.sh
 
       # Both the app and the recorder must name the certificate, not an ad-hoc hash, or installed
-      # copies couldn't update to this one and macOS would ask for permissions again.
+      # copies couldn't update to this one and macOS would ask for permissions again. So must
+      # llama.cpp's server and its libraries, which come signed ad-hoc by their own build.
       - name: Check the signatures
         run: |
           app=build/Oatcake.app
           codesign --verify --deep --strict "$app"
-          for bundle in "$app" "$app/Contents/Resources/OatcakeRecorder.app"; do
+          for bundle in "$app" "$app/Contents/Resources/OatcakeRecorder.app" "$app"/Contents/Resources/llama/llama-server "$app"/Contents/Resources/llama/*.dylib; do
             requirement="$(codesign -d -r - "$bundle" 2>/dev/null)"
             echo "$bundle: $requirement"
             case "$requirement" in

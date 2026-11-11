@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds build/Oatcake.app: the app, with the recorder as its own app bundle inside it so macOS asks
-# for microphone and system-audio permission for "OatcakeRecorder" alone.
+# for microphone and system-audio permission for "OatcakeRecorder" alone, and with llama.cpp's
+# server, which runs the language model on this Mac (see Sources/OatcakeCore/LocalModel.swift).
 #
 #   Scripts/bundle.sh            release build
 #   Scripts/bundle.sh debug      debug build
@@ -33,6 +34,44 @@ mkdir -p "$RECORDER/Contents/MacOS"
 cp "$BIN/OatcakeRecorder" "$RECORDER/Contents/MacOS/oatcake-recorder"
 sed "s/VERSION/$VERSION/g" Resources/OatcakeRecorder-Info.plist > "$RECORDER/Contents/Info.plist"
 
+# llama.cpp's server and the libraries it loads: one fixed build from llama.cpp's own releases,
+# checked against its SHA-256 before anything is taken from it. To move to a newer build, change the
+# tag and the checksum together (shasum -a 256 on the archive), and measure before shipping.
+LLAMA_TAG=b12110
+LLAMA_SHA256=4f5b8de12e0b9516658ca6a5764c6ffb3d7c659c3dd538556b1413c7b4050662
+LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_TAG/llama-$LLAMA_TAG-bin-macos-arm64.tar.gz"
+LLAMA_FILES=(llama-server libllama-server-impl.dylib libllama-common.0.dylib libmtmd.0.dylib libllama.0.dylib libggml.0.dylib
+             libggml-cpu.0.dylib libggml-blas.0.dylib libggml-metal.0.dylib libggml-rpc.0.dylib libggml-base.0.dylib)
+CACHE="$ROOT/.build/llama"
+ARCHIVE="$CACHE/llama-$LLAMA_TAG-bin-macos-arm64.tar.gz"
+checksum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+mkdir -p "$CACHE"
+if [[ ! -f "$ARCHIVE" || "$(checksum "$ARCHIVE")" != "$LLAMA_SHA256" ]]; then
+    curl -fsSL --retry 3 -o "$ARCHIVE" "$LLAMA_URL"
+fi
+if [[ "$(checksum "$ARCHIVE")" != "$LLAMA_SHA256" ]]; then
+    echo "error: $ARCHIVE isn't the llama.cpp build that was expected (its SHA-256 doesn't match)." >&2
+    exit 1
+fi
+rm -rf "$CACHE/unpacked"
+mkdir -p "$CACHE/unpacked"
+tar -xzf "$ARCHIVE" -C "$CACHE/unpacked"
+LLAMA_FROM="$(dirname "$(find "$CACHE/unpacked" -type f -name llama-server | head -1)")"
+LLAMA="$APP/Contents/Resources/llama"
+mkdir -p "$LLAMA"
+# -L: the archive has each library under three names, two of them links. The one it's loaded by is kept, as a file.
+for file in "${LLAMA_FILES[@]}"; do cp -L "$LLAMA_FROM/$file" "$LLAMA/$file"; done
+cp "$LLAMA_FROM/LICENSE" "$LLAMA/LICENSE"
+# Everything they load from beside themselves has to have come along.
+for file in "${LLAMA_FILES[@]}"; do
+    for needed in $(otool -L "$LLAMA/$file" | awk 'NR > 1 { print $1 }' | grep '^@rpath/' || true); do
+        if [[ ! -f "$LLAMA/${needed#@rpath/}" ]]; then
+            echo "error: $file needs ${needed#@rpath/}, which isn't in LLAMA_FILES." >&2
+            exit 1
+        fi
+    done
+done
+
 IDENTITY="${OATCAKE_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
     if security find-identity -p codesigning 2>/dev/null | grep -q '"Oatcake Release"'; then IDENTITY="Oatcake Release"; else IDENTITY=-; fi
@@ -43,7 +82,13 @@ if [[ "$IDENTITY" == "-" && -n "${OATCAKE_REQUIRE_SIGNING:-}" ]]; then
 fi
 KEYCHAIN=()
 if [[ -n "${OATCAKE_SIGN_KEYCHAIN:-}" ]]; then KEYCHAIN=(--keychain "$OATCAKE_SIGN_KEYCHAIN"); fi
-# The recorder sits in Resources, where --deep doesn't reach, so it's signed on its own first.
+# The recorder and llama.cpp sit in Resources, where --deep doesn't reach, so they're signed on
+# their own first: llama.cpp's files with the same identity as the app, in place of the ad-hoc
+# signatures they come with.
+for file in "${LLAMA_FILES[@]}"; do
+    codesign --force --sign "$IDENTITY" ${KEYCHAIN[@]+"${KEYCHAIN[@]}"} "$LLAMA/$file"
+done
 codesign --force --sign "$IDENTITY" ${KEYCHAIN[@]+"${KEYCHAIN[@]}"} "$RECORDER"
 codesign --force --sign "$IDENTITY" ${KEYCHAIN[@]+"${KEYCHAIN[@]}"} "$APP"
+codesign --verify --deep --strict "$APP"
 echo "Built $APP $VERSION, signed $([[ "$IDENTITY" == "-" ]] && echo ad-hoc || echo "with \"$IDENTITY\"")"
