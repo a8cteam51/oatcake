@@ -70,6 +70,7 @@ struct MeetingListView: View {
                 // Picking a meeting leaves this list as it is, rather than swapping it for the meeting's folder.
                 // Picking several (⌘- or ⇧-click) leaves the open meeting open, for acting on them all at once.
                 let listed = Set(rows.map(\.path))
+                let chosen = rows.filter { selected(in: listed).contains($0.path) }
                 List(selection: Binding(get: { selected(in: listed) }, set: { paths in
                     picked = paths
                     if paths.count == 1, let p = paths.first { open(p, hit: hits[p]) }
@@ -91,14 +92,8 @@ struct MeetingListView: View {
                         Button("Move \(nodes.count) Meetings to Trash") { model.trash(nodes) }
                     }
                 }
-                // ⌘⌫, as in Finder.
-                .onKeyPress(.delete, phases: .down) { press in
-                    guard press.modifiers == .command else { return .ignored }
-                    let nodes = rows.filter { selected(in: listed).contains($0.path) }
-                    if nodes.isEmpty { return .ignored }
-                    model.trash(nodes)
-                    return .handled
-                }
+                // File › Move to Trash (⌘⌫, as in Finder) acts on the selection while the list has the keyboard.
+                .focusedValue(\.trashMeetings, chosen.isEmpty ? nil : { model.trash(chosen) })
             }
         }
         .background(Color(nsColor: .textBackgroundColor))

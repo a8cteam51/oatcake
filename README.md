@@ -61,7 +61,8 @@ meeting itself. Settings (⌘,) is its own window, in panes; changes apply as yo
 title, folder, summary, to-dos, notes and transcript; a meeting found by its text shows the line
 with the words and opens there), and ⌘F finds words in the transcript you're reading. ⇧⌘N makes a
 folder and ⌘R refreshes the calendar; all of these are in the File and Edit menus. ⌘- or
-⇧-click selects several meetings in the list, and right-click or ⌘⌫ moves them all to the Trash.
+⇧-click selects several meetings in the list, and right-click or File › Move to Trash (⌘⌫) moves
+them all to the Trash.
 
 1. **Record.** New recording, or click an event under Upcoming. Pick the folder (a calendar
    event picks the folder named like it, or the one its earlier meetings are in, or offers a
