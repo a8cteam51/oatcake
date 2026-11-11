@@ -3,6 +3,7 @@
 // jump to that moment; links to meeting folders open the meeting. Raw HTML stays as text.
 
 import Foundation
+import OatcakeCore
 import SwiftUI
 
 /// A link that jumps to a transcript time.
@@ -197,13 +198,20 @@ func meetingPath(from url: URL) -> String? {
     return rel.isEmpty ? nil : rel
 }
 
+/// The time a link to a meeting carries ("…#12:34"): where in its transcript to open it.
+func meetingStamp(from url: URL) -> String? {
+    guard let stamp = url.fragment, stamp.range(of: #"^\d{1,2}:\d\d(:\d\d)?$"#, options: .regularExpression) != nil else { return nil }
+    return stamp
+}
+
 /**
  * Ask's answers come from a model that has read whatever was said on your calls, so a web link in
- * one is shown as plain text rather than made clickable. Links to meetings open in Oatcake and read
- * "Leads sync · Oct 29", like dates elsewhere, whatever the model wrote.
+ * one is shown as plain text rather than made clickable. Links to meetings open in Oatcake. One the
+ * model wrote itself reads "Leads sync · Oct 29", like dates elsewhere, whatever its text was; the
+ * ones Oatcake made from the model's citations (they carry a time) keep theirs.
  */
 func answerMarkdown(_ markdown: String) -> String {
-    let regex = try! NSRegularExpression(pattern: #"\[([^\]]*)\]\(([^)\s]*)\)"#)
+    let regex = try! NSRegularExpression(pattern: #"\[((?:[^\]\\]|\\.)*)\]\(([^)\s]*)\)"#)
     var out = markdown
     for match in regex.matches(in: markdown, range: NSRange(markdown.startIndex..., in: markdown)).reversed() {
         guard let whole = Range(match.range, in: markdown), let textRange = Range(match.range(at: 1), in: markdown),
@@ -212,7 +220,7 @@ func answerMarkdown(_ markdown: String) -> String {
         let replacement: String
         if href.range(of: #"^[a-z][a-z0-9+.-]*:"#, options: [.regularExpression, .caseInsensitive]) != nil {
             replacement = text == href ? text : "\(text) (\(href))"
-        } else if let url = URL(string: href), let rel = meetingPath(from: url), let label = meetingLinkText(rel) {
+        } else if let url = URL(string: href), meetingStamp(from: url) == nil, let rel = meetingPath(from: url), let label = meetingLinkText(rel) {
             replacement = "[\(label)](\(href))"
         } else {
             continue
@@ -220,16 +228,4 @@ func answerMarkdown(_ markdown: String) -> String {
         out.replaceSubrange(Range(NSRange(whole, in: markdown), in: out)!, with: replacement)
     }
     return out
-}
-
-/// "Team 51 – Leads sync · Oct 29" for the folder "…/2026-10-29 1630 Team 51 – Leads sync".
-private func meetingLinkText(_ rel: String) -> String? {
-    let name = rel.split(separator: "/").last.map(String.init) ?? rel
-    let regex = try! NSRegularExpression(pattern: #"^\d{4}-(\d\d)-(\d\d)(?: \d{4})? (.+)$"#)
-    guard let m = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
-          let month = Range(m.range(at: 1), in: name).flatMap({ Int(name[$0]) }),
-          let day = Range(m.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
-          let title = Range(m.range(at: 3), in: name).map({ String(name[$0]) }), (1...12).contains(month) else { return nil }
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    return "\(title.replacingOccurrences(of: "]", with: "\\]")) · \(months[month - 1]) \(day)"
 }

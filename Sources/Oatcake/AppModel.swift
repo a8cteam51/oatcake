@@ -109,12 +109,21 @@ final class AppModel {
     /// Notes typed during each call, kept here so leaving the live view and coming back keeps them.
     var liveNotes: [String: [LiveLine]] = [:]
     var pendingEvent: CalendarEvent?
+    /// How far each language model's download has got (0 to 1) while one is under way, and why the
+    /// last one stopped, by model.
+    var modelDownloads: [String: Double] = [:]
+    var modelDownloadErrors: [String: String] = [:]
+    /// Bumps when a model's file arrives or is removed, so Settings looks at the disk again.
+    var modelsVersion = 0
+    private var modelDownloadTasks: [String: Task<Void, Error>] = [:]
 
     /// Recorders running now, by recording ID.
     private var active: [String: Recording] = [:]
     private var analysing = Set<String>()
-    /// The analysis helper running for each recording, so discarding a recording stops its helper too.
+    /// The analysis helper running for each recording, and the work around it (which goes on to
+    /// suggest names), so discarding a recording stops both.
     private var helpers: [String: Process] = [:]
+    private var analyses: [String: Task<Void, Never>] = [:]
     private var autoStarted = Set<String>()
     private var liveHelper: Process?
     /// The recording whose live transcript helper is running or on its way up. A second helper for the
@@ -148,7 +157,10 @@ final class AppModel {
         // Left by the Electron version: its secrets move into the Keychain, its speech models and
         // Chromium caches go.
         Secrets.migrateFromElectron()
+        Secrets.forgetRetired()
         SpeechModels.removeOldModels()
+        // A language model left running by a copy of Oatcake that didn't get to stop it.
+        ModelServer.stopLeftover()
         try? FileManager.default.removeItem(at: Paths.data.appendingPathComponent("Chromium"))
 
         resumeRecordings()
@@ -170,6 +182,8 @@ final class AppModel {
                 self.now = Date()
                 self.checkReminders()
                 self.updateMenuBar()
+                // The language model gives its memory back after ten minutes with nothing to write.
+                await ModelServer.shared.stopIfIdle(for: 600)
             }
         })
         timers.append(Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in Task { @MainActor in self.checkCall() } })
@@ -541,6 +555,8 @@ final class AppModel {
         }
         startLiveTranscript(rec)
         updateMenuBar()
+        // The language model is fetched while the first call is recorded, to be there when it ends.
+        if let chosenModel, !LocalModels.isDownloaded(chosenModel) { downloadModel(chosenModel) }
     }
 
     /// Recordings left from an earlier run: a recorder still going is picked up again; a dead one is finished off.
@@ -615,11 +631,12 @@ final class AppModel {
                                     ok: "Cancel recording", cancel: "Keep waiting", action: cancel)
     }
 
-    /// Never leave the recorder running behind a closed app.
+    /// Never leave the recorder (or the language model) running behind a closed app.
     func stopAllRecorders() {
         if let live { saveLiveNotes(live.id) }
         stopLiveTranscript()
         for rec in active.values { Recordings.stop(rec) }
+        ModelServer.stopLeftover()
     }
 
     var isRecording: Bool { !active.isEmpty }
@@ -761,34 +778,46 @@ final class AppModel {
         guard let rec = Recordings.get(id), !analysing.contains(id) else { return }
         analysing.insert(id)
         progress[id] = JobProgress(step: progress[id]?.step ?? "Starting")
-        Task {
+        analyses[id] = Task {
             // Steps arrive as they happen; the outcome is read from the full output once it exits.
-            let result = try? await ChildProcess.run(Bundle.main.executableURL!, ["--analyse", rec.dir.path], keepApiKeys: true, onStart: { process in
+            let result = try? await ChildProcess.run(Bundle.main.executableURL!, ["--analyse", rec.dir.path], onStart: { process in
                 Task { @MainActor in self.helpers[id] = process }
             }, onLine: { line in
                 guard let p = try? JSONDecoder().decode(AnalysisProgress.self, from: Data(line.utf8)), p.step != nil else { return }
                 Task { @MainActor in self.apply(id, p) }
             })
-            analysing.remove(id)
             helpers.removeValue(forKey: id)
+            var outcome = (result?.stdout ?? "").split(separator: "\n").reversed()
+                .compactMap { try? JSONDecoder().decode(AnalysisProgress.self, from: Data($0.utf8)) }
+                .first { $0.done == true || $0.error != nil }
+            if outcome == nil {
+                if result?.status == 0, FileManager.default.fileExists(atPath: rec.dir.appendingPathComponent("analysis.json").path) {
+                    outcome = AnalysisProgress(done: true)
+                } else {
+                    let detail = result.map { $0.stderr.trimmed.isEmpty ? "" : ": " + String($0.stderr.trimmed.suffix(300)) } ?? ""
+                    outcome = AnalysisProgress(error: "Analysis stopped (code \(result?.status ?? -1))\(detail)")
+                }
+            }
+            // Step 5, here rather than in the helper: the language model is the app's to run. A model
+            // that's still downloading isn't waited for; the names can be typed.
+            if outcome?.done == true, Recordings.get(id) != nil, !Task.isCancelled, hasUnnamedVoices(rec.dir) {
+                progress[id] = JobProgress(step: analysisSteps[4])
+                if let chosenModel, !LocalModels.isDownloaded(chosenModel) { downloadModel(chosenModel) }
+                await suggestNames(rec.dir, config: config)
+            }
+            analysing.remove(id)
+            analyses.removeValue(forKey: id)
             // Discarded while it ran: nothing to report.
             guard Recordings.get(id) != nil else {
                 progress.removeValue(forKey: id)
                 return
             }
-            let outcome = (result?.stdout ?? "").split(separator: "\n").reversed()
-                .compactMap { try? JSONDecoder().decode(AnalysisProgress.self, from: Data($0.utf8)) }
-                .first { $0.done == true || $0.error != nil }
-            if let outcome {
-                apply(id, outcome)
-            } else if result?.status == 0, FileManager.default.fileExists(atPath: rec.dir.appendingPathComponent("analysis.json").path) {
-                apply(id, AnalysisProgress(done: true))
-            } else {
-                let detail = result.map { $0.stderr.trimmed.isEmpty ? "" : ": " + String($0.stderr.trimmed.suffix(300)) } ?? ""
-                apply(id, AnalysisProgress(error: "Analysis stopped (code \(result?.status ?? -1))\(detail)"))
-            }
+            if let outcome { apply(id, outcome) }
         }
     }
+
+    /// Whether a recording is still being worked on (its review waits until it isn't).
+    func isAnalysing(_ id: String) -> Bool { analysing.contains(id) }
 
     private func apply(_ id: String, _ p: AnalysisProgress) {
         if p.done == true {
@@ -813,6 +842,7 @@ final class AppModel {
                                     ok: "Discard", cancel: "Cancel") { [self] in
             // A helper still analysing it would write its transcript and clips back after the folder had gone.
             helpers.removeValue(forKey: rec.id)?.terminate()
+            analyses.removeValue(forKey: rec.id)?.cancel()
             try Recordings.discard(rec.id)
             reviewDrafts.removeValue(forKey: rec.id)
             progress.removeValue(forKey: rec.id)
@@ -841,6 +871,7 @@ final class AppModel {
         let config = config
         Task {
             do {
+                try await ensureModel()
                 let draft = try await OatcakeCore.draftSummary(config, meeting: path)
                 try OatcakeCore.writeSummary(draft, config: config, meeting: summaryJobs[job] ?? path)
             } catch {
@@ -849,6 +880,77 @@ final class AppModel {
             summarising.remove(summaryJobs[job] ?? path)
             summaryJobs.removeValue(forKey: job)
             refresh()
+        }
+    }
+
+    // MARK: - Language model
+
+    /// The model chosen in Settings, when it's one Oatcake downloads and runs itself.
+    var chosenModel: LocalModel? { LocalModels.find(config.llm.model) }
+
+    /// "Downloading the language model: 42% of 5.0 GB", while the chosen one is on its way.
+    var modelDownloadStatus: String? {
+        guard let chosenModel, let fraction = modelDownloads[chosenModel.id] else { return nil }
+        return "Downloading the language model: \(Int(fraction * 100))% of \(chosenModel.downloadSize)"
+    }
+
+    /// Starts downloading a model, or joins the download already under way.
+    @discardableResult
+    func downloadModel(_ model: LocalModel) -> Task<Void, Error> {
+        if let task = modelDownloadTasks[model.id] { return task }
+        modelDownloadErrors.removeValue(forKey: model.id)
+        modelDownloads[model.id] = 0
+        let task = Task {
+            defer {
+                modelDownloadTasks.removeValue(forKey: model.id)
+                modelDownloads.removeValue(forKey: model.id)
+                modelsVersion += 1
+            }
+            do {
+                try await ModelDownload.fetch(model) { fraction in
+                    Task { @MainActor in
+                        if self.modelDownloadTasks[model.id] != nil { self.modelDownloads[model.id] = fraction }
+                    }
+                }
+            } catch {
+                if !isCancellation(error) { modelDownloadErrors[model.id] = error.localizedDescription }
+                throw error
+            }
+        }
+        modelDownloadTasks[model.id] = task
+        return task
+    }
+
+    func stopModelDownload(_ model: LocalModel) { modelDownloadTasks[model.id]?.cancel() }
+
+    /// Deletes a model's file, stopping its download or the model itself first.
+    func removeModel(_ model: LocalModel) {
+        let download = modelDownloadTasks[model.id]
+        download?.cancel()
+        Task {
+            _ = try? await download?.value
+            await ModelServer.shared.stop()
+            LocalModels.remove(model)
+            modelsVersion += 1
+        }
+    }
+
+    /// Waits for the chosen model to be on this Mac, downloading it if it isn't. A server of your
+    /// own needs nothing.
+    func ensureModel() async throws {
+        guard let chosenModel, !LocalModels.isDownloaded(chosenModel) else { return }
+        let download = downloadModel(chosenModel)
+        // Looked at again every so often, so that whatever is waiting (a question, say) can be
+        // stopped without stopping the download.
+        while modelDownloadTasks[chosenModel.id] != nil {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        do {
+            try await download.value
+        } catch where isCancellation(error) {
+            // The download was stopped (in Settings), not what was waiting for it.
+            throw OatcakeError(modelNotDownloadedMessage)
         }
     }
 
@@ -865,7 +967,7 @@ final class AppModel {
     var jobs: [Job] {
         pending.sorted { $0.startedAt > $1.startedAt }.map { rec in
             let p = progress[rec.id]
-            return Job(rec: rec, status: p?.error != nil ? .failed : rec.state == .processed ? .review : .processing,
+            return Job(rec: rec, status: p?.error != nil ? .failed : rec.state == .processed && !analysing.contains(rec.id) ? .review : .processing,
                        step: stepNumber(p?.step ?? ""))
         }
     }
@@ -1000,47 +1102,51 @@ struct AskTurn: Identifiable {
 }
 
 /// One conversation for as long as the app is open. It carries on as you move between meetings, so
-/// following a link in an answer doesn't lose it. Each question says which meeting is open.
+/// following a link in an answer doesn't lose it. Each question is asked about the meeting that's open.
 @MainActor @Observable
 final class AskChat {
-    var sessionId: String?
     var turns: [AskTurn] = []
     var open = false
-    private var requests: [UUID: AskRequest] = [:]
+    private var tasks: [UUID: Task<Void, Never>] = [:]
 
     var running: AskTurn? { turns.first(where: \.running) }
 
-    func send(_ question: String, meeting: String, config: Config) {
+    func send(_ question: String, meeting: String, app: AppModel) {
+        let history = turns.compactMap { turn in turn.answer.map { AskExchange(question: turn.question, answer: $0) } }
         let turn = AskTurn(question: question)
         turns.append(turn)
         open = true
-        let request = AskRequest()
-        requests[turn.id] = request
-        let session = sessionId
-        let model = config.llm.provider == .claudeCode && !config.llm.claudeCode.model.isEmpty ? config.llm.claudeCode.model : nil
-        Task {
+        let config = app.config
+        tasks[turn.id] = Task {
             do {
-                let answer = try await request.run(root: config.meetingsRoot, meeting: meeting, question: question, sessionId: session,
-                                                   myName: config.myName, jargon: config.jargonLine, model: model) { step in
+                // The first question may find the model still on its way.
+                let waiting = Task {
+                    while !Task.isCancelled {
+                        if let status = app.modelDownloadStatus { update(turn.id) { $0.step = status } }
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                }
+                defer { waiting.cancel() }
+                try await app.ensureModel()
+                waiting.cancel()
+                let answer = try await OatcakeCore.ask(config, meeting: meeting, question: question, history: history) { step in
                     Task { @MainActor in self.update(turn.id) { $0.step = step } }
                 }
-                update(turn.id) { $0.answer = answer.answer }
-                sessionId = answer.sessionId
+                update(turn.id) { $0.answer = answer }
             } catch {
                 let message = error.localizedDescription
-                update(turn.id) { if message == "Stopped." { $0.stopped = true } else { $0.error = message } }
+                update(turn.id) { if Task.isCancelled || isCancellation(error) { $0.stopped = true } else { $0.error = message } }
             }
-            requests.removeValue(forKey: turn.id)
+            tasks.removeValue(forKey: turn.id)
         }
     }
 
     func cancel() {
-        if let running { requests[running.id]?.cancel() }
+        if let running { tasks[running.id]?.cancel() }
     }
 
     func newChat() {
         turns = []
-        sessionId = nil
         open = true
     }
 

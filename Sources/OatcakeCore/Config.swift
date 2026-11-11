@@ -1,71 +1,106 @@
 import Foundation
 
-public enum Effort: String, Codable, CaseIterable, Sendable { case low, medium, high }
-
-public enum LlmProvider: String, Codable, CaseIterable, Sendable {
-    case claudeCode = "claude-code"
-    case anthropic
-    case openaiCompatible = "openai-compatible"
-}
-
 /**
- * Which model writes summaries and suggests names. Each provider keeps its own settings, so
- * switching back and forth loses nothing. API keys are kept in the Keychain (see Secrets).
+ * Which model writes summaries, suggests names and answers questions. It's always on your own
+ * hardware: one of the models Oatcake downloads and runs itself (LocalModels), or a server of your
+ * own on this Mac or your network.
  */
 public struct LlmConfig: Codable, Equatable, Sendable {
-    // Each of these reads its settings one by one, like Config does: a key that's missing (a file from
-    // another version, or one edited by hand) falls back to its default and leaves the others alone.
-    public struct ClaudeCode: Codable, Equatable, Sendable {
-        /// "" for Claude Code's default, or an alias such as "sonnet", "opus", "haiku".
-        public var model = ""
-        public var effort = Effort.medium
-        public init() {}
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? ""
-            effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
-        }
-    }
-    public struct Anthropic: Codable, Equatable, Sendable {
-        public var model = anthropicModels[0]
-        public var effort = Effort.medium
-        public init() {}
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? anthropicModels[0]
-            effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
-        }
-    }
-    public struct OpenAI: Codable, Equatable, Sendable {
+    /// What `model` is when the model is on a server of your own.
+    public static let ownServer = "own"
+
+    /// A model server of yours, such as Ollama or LM Studio: its chat API's address
+    /// (http://localhost:11434/v1 for Ollama) and the model's name there.
+    public struct Own: Codable, Equatable, Sendable {
         public var baseUrl = ""
         public var model = ""
-        public var effort = Effort.medium
         public init() {}
+        // Read one by one, like Config: a key that's missing leaves the other alone.
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             baseUrl = (try? c.decodeIfPresent(String.self, forKey: .baseUrl)) ?? ""
             model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? ""
-            effort = (try? c.decodeIfPresent(Effort.self, forKey: .effort)) ?? .medium
         }
     }
 
-    public var provider: LlmProvider
-    public var claudeCode = ClaudeCode()
-    public var anthropic = Anthropic()
-    public var openai = OpenAI()
+    /**
+     * Whether the model thinks a task through before it replies, for each thing it's asked to do.
+     * It's slower with it and not always better. Each starts where it did best when measured on
+     * an hour-and-a-half call, several runs each way: with it, summaries gave a decision to the
+     * right person far more reliably, names were invented less often, and Ask kept to what was
+     * asked; without it, to-dos kept what was decided, where with it they often lost the detail.
+     */
+    public struct Reasoning: Codable, Equatable, Sendable {
+        public var summary = true
+        public var todos = false
+        public var names = true
+        public var ask = true
+        public init() {}
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let start = Reasoning()
+            summary = (try? c.decodeIfPresent(Bool.self, forKey: .summary)) ?? start.summary
+            todos = (try? c.decodeIfPresent(Bool.self, forKey: .todos)) ?? start.todos
+            names = (try? c.decodeIfPresent(Bool.self, forKey: .names)) ?? start.names
+            ask = (try? c.decodeIfPresent(Bool.self, forKey: .ask)) ?? start.ask
+        }
+    }
 
-    public init(provider: LlmProvider) { self.provider = provider }
+    /// One of LocalModels' ids ("qwen3-8b", "qwen3-4b"), or "own".
+    public var model: String
+    public var own = Own()
+    public var reasoning = Reasoning()
+
+    /// The model that suits this Mac's memory.
+    public init() { model = LocalModels.recommended().id }
+
+    public init(model: String) { self.model = model }
+
+    /// Earlier, the choice was a provider (Claude Code, the Anthropic API, or any OpenAI-compatible
+    /// address) with its settings under its own key.
+    private enum OlderKeys: String, CodingKey { case provider, local, openai }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        provider = (try? c.decodeIfPresent(LlmProvider.self, forKey: .provider)) ?? .claudeCode
-        claudeCode = (try? c.decodeIfPresent(ClaudeCode.self, forKey: .claudeCode)) ?? ClaudeCode()
-        anthropic = (try? c.decodeIfPresent(Anthropic.self, forKey: .anthropic)) ?? Anthropic()
-        openai = (try? c.decodeIfPresent(OpenAI.self, forKey: .openai)) ?? OpenAI()
+        own = (try? c.decodeIfPresent(Own.self, forKey: .own)) ?? Own()
+        reasoning = (try? c.decodeIfPresent(Reasoning.self, forKey: .reasoning)) ?? Reasoning()
+        if let saved = try? c.decodeIfPresent(String.self, forKey: .model), saved == Self.ownServer || LocalModels.find(saved) != nil {
+            model = saved
+            return
+        }
+        // Older settings: a local server that was set up carries over; Claude doesn't, and neither
+        // does an address that isn't on your Mac or network.
+        model = LocalModels.recommended().id
+        guard let older = try? decoder.container(keyedBy: OlderKeys.self),
+              let provider = try? older.decodeIfPresent(String.self, forKey: .provider), provider == "local" || provider == "openai-compatible" else { return }
+        let server = ((try? older.decodeIfPresent(Own.self, forKey: .local)) ?? nil) ?? ((try? older.decodeIfPresent(Own.self, forKey: .openai)) ?? nil)
+        if let server, !server.baseUrl.trimmed.isEmpty, isLocalEndpoint(server.baseUrl) {
+            own = server
+            model = Self.ownServer
+        }
     }
 }
 
-public let anthropicModels = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+/**
+ * Whether a model server's address is on this Mac or your own network: localhost, a name with no
+ * dots or ending in .local, or a private or link-local IP address. Oatcake sends transcripts to a
+ * local model only at an address like that, so one can't be pointed at somebody else's service.
+ */
+public func isLocalEndpoint(_ address: String) -> Bool {
+    guard let url = URL(string: address.trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+          let host = url.host(percentEncoded: false)?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")), !host.isEmpty else { return false }
+    if host.contains(":") {
+        // IPv6: this Mac, link-local, or a unique local address.
+        return host == "::1" || host.hasPrefix("fe8") || host.hasPrefix("fe9") || host.hasPrefix("fea") || host.hasPrefix("feb")
+            || host.hasPrefix("fc") || host.hasPrefix("fd")
+    }
+    let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+    if parts.count == 4, let n = Optional(parts.compactMap { UInt8($0) }), n.count == 4 {
+        return n[0] == 127 || n[0] == 10 || (n[0] == 172 && (16...31).contains(n[1])) || (n[0] == 192 && n[1] == 168) || (n[0] == 169 && n[1] == 254)
+    }
+    // A name: this Mac, a machine named on your network, or a Bonjour name.
+    return host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") || !host.contains(".")
+}
 
 public struct MicChoice: Codable, Equatable, Hashable, Sendable {
     public var uid: String
@@ -102,22 +137,21 @@ public struct Config: Codable, Equatable, Sendable {
     public var jargon: [String]
     /// With a calendar connected, show the time until the next call in the menu bar.
     public var menuBarNextCall: Bool
+    /// What the model is told when it writes a summary, when you've changed it. "" = Oatcake's own
+    /// (defaultSummaryInstructions), so an improvement to those reaches everyone who hasn't.
+    public var summaryInstructions: String
 
     public var meetingsRoot: URL { URL(fileURLWithPath: outputDir, isDirectory: true) }
 
     /// Worked out once: the defaults are read on nearly every load.
-    private static let guessed: (myName: String, hasClaude: Bool) = (
-        NSFullUserName().isEmpty ? NSUserName() : NSFullUserName(),
-        ShellEnvironment.which("claude") != nil
-    )
+    private static let guessedName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
 
     public static func defaults() -> Config {
         Config(
-            myName: guessed.myName,
+            myName: guessedName,
             outputDir: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/Meetings").path,
             asrModel: SpeechModels.defaultAsr,
-            // Claude Code reuses an existing Claude login; otherwise use the API.
-            llm: LlmConfig(provider: guessed.hasClaude ? .claudeCode : .anthropic),
+            llm: LlmConfig(),
             keepAudio: false,
             mic: nil,
             callReminders: true,
@@ -126,7 +160,8 @@ public struct Config: Codable, Equatable, Sendable {
     }
 
     init(myName: String, outputDir: String, asrModel: String, llm: LlmConfig, keepAudio: Bool, mic: MicChoice?, callReminders: Bool, updateCheck: Bool,
-         callNotice: Bool = true, autoStop: Bool = true, liveTranscript: Bool = true, jargon: [String] = [], menuBarNextCall: Bool = true) {
+         callNotice: Bool = true, autoStop: Bool = true, liveTranscript: Bool = true, jargon: [String] = [], menuBarNextCall: Bool = true,
+         summaryInstructions: String = "") {
         self.myName = myName
         self.outputDir = outputDir
         self.asrModel = asrModel
@@ -140,6 +175,7 @@ public struct Config: Codable, Equatable, Sendable {
         self.liveTranscript = liveTranscript
         self.jargon = jargon
         self.menuBarNextCall = menuBarNextCall
+        self.summaryInstructions = summaryInstructions
     }
 
     /// Missing or unreadable settings fall back to the defaults one by one.
@@ -159,6 +195,7 @@ public struct Config: Codable, Equatable, Sendable {
         liveTranscript = (try? c.decodeIfPresent(Bool.self, forKey: .liveTranscript)) ?? base.liveTranscript
         jargon = (try? c.decodeIfPresent([String].self, forKey: .jargon)) ?? base.jargon
         menuBarNextCall = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarNextCall)) ?? base.menuBarNextCall
+        summaryInstructions = (try? c.decodeIfPresent(String.self, forKey: .summaryInstructions)) ?? base.summaryInstructions
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -177,10 +214,11 @@ public struct Config: Codable, Equatable, Sendable {
         try c.encode(liveTranscript, forKey: .liveTranscript)
         try c.encode(jargon, forKey: .jargon)
         try c.encode(menuBarNextCall, forKey: .menuBarNextCall)
+        try c.encode(summaryInstructions, forKey: .summaryInstructions)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case myName, outputDir, asrModel, llm, keepAudio, mic, callReminders, updateCheck, callNotice, autoStop, liveTranscript, jargon, menuBarNextCall
+        case myName, outputDir, asrModel, llm, keepAudio, mic, callReminders, updateCheck, callNotice, autoStop, liveTranscript, jargon, menuBarNextCall, summaryInstructions
     }
 
     /// For the model: how to spell the names and terms you've listed, or "" when there are none.
@@ -188,6 +226,9 @@ public struct Config: Codable, Equatable, Sendable {
         let terms = jargon.map(\.trimmed).filter { !$0.isEmpty }
         return terms.isEmpty ? "" : "Spell these names and terms exactly as written here whenever they come up (the transcript may have misheard them): \(terms.joined(separator: ", "))."
     }
+
+    /// What the model is told when it writes a summary: yours, or Oatcake's own.
+    public var summaryTask: String { summaryInstructions.trimmed.isEmpty ? defaultSummaryInstructions : summaryInstructions.trimmed }
 
     public static func load() -> Config {
         try? FileManager.default.createDirectory(at: Paths.data, withIntermediateDirectories: true)
@@ -205,38 +246,11 @@ public struct Config: Codable, Equatable, Sendable {
     }
 }
 
-/// Apps opened from Finder get a bare PATH. The login shell's is borrowed, so `claude` is found.
+/// What Oatcake's own helper processes are started with: this process's environment, without the
+/// calendar's private address, which is none of their business.
 public enum ShellEnvironment {
-    public static let path: String = {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        // Markers, because interactive shells can print terminal escape codes before the value.
-        if let out = try? runCapturing(shell, ["-ilc", #"printf "<<PATH>>%s<<PATH>>" "$PATH""#], timeout: 5),
-           case let parts = out.components(separatedBy: "<<PATH>>"), parts.count >= 3, !parts[1].isEmpty {
-            return parts[1]
-        }
-        return ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-    }()
-
-    /// The full path of a command on the login shell's PATH.
-    public static func which(_ command: String) -> URL? {
-        for dir in path.split(separator: ":") {
-            let candidate = URL(fileURLWithPath: String(dir)).appendingPathComponent(command)
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
-    }
-
-    /// The environment for child processes: the login shell's PATH, and none of Oatcake's API keys
-    /// (Claude Code always uses its own sign-in and billing, whichever provider is chosen). Oatcake's
-    /// own analysis helper keeps them: a key from your shell is its fallback too.
-    public static func childEnvironment(keepApiKeys: Bool = false) -> [String: String] {
+    public static func childEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = path
-        if !keepApiKeys {
-            env.removeValue(forKey: "ANTHROPIC_API_KEY")
-            env.removeValue(forKey: "OATCAKE_OPENAI_API_KEY")
-        }
-        // The calendar's private address is nobody else's business either way.
         env.removeValue(forKey: "OATCAKE_CALENDAR_URL")
         return env
     }

@@ -54,7 +54,7 @@ struct AskBar: View {
         let question = (text ?? draft).trimmed
         guard !question.isEmpty, model.ask.running == nil else { return }
         draft = ""
-        model.ask.send(question, meeting: path, config: model.config)
+        model.ask.send(question, meeting: path, app: model)
     }
 
     private func panel(_ chat: AskChat) -> some View {
@@ -96,7 +96,8 @@ struct AskBar: View {
         .frame(maxWidth: 640)
         .environment(\.openURL, OpenURLAction { url in
             if let rel = meetingPath(from: url) {
-                model.openMeeting(rel)
+                // A citation with a time opens the transcript there.
+                model.openMeeting(rel, jump: meetingStamp(from: url).map { Jump(tab: .transcript, stamp: $0) })
                 return .handled
             }
             return .discarded
