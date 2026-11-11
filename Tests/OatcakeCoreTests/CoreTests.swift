@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Network
 @testable import OatcakeCore
 import Testing
 
@@ -298,7 +300,7 @@ private func fixture(_ name: String) throws -> URL {
         config.myName = "Sam Taylor"
         config.outputDir = root.path
         config.keepAudio = true
-        config.llm = LlmConfig(provider: .local) // no endpoint: the model can't be reached
+        config.llm = LlmConfig(model: LlmConfig.ownServer) // no endpoint: the model can't be reached
         let rec = Recording(id: "2026-11-10T14-00-00-000Z", dir: recDir, title: "Weekly sync", folder: "", startedAt: Date(), state: .processed)
 
         let saved = try saveMeeting(config, rec, decisions: ["A": .name("Alex Kim")], folder: "")
@@ -332,7 +334,7 @@ private func fixture(_ name: String) throws -> URL {
         var config = Config.defaults()
         config.outputDir = tmp.appendingPathComponent("Meetings").path
         config.keepAudio = true
-        config.llm = LlmConfig(provider: .local) // no endpoint: the model can't be reached
+        config.llm = LlmConfig(model: LlmConfig.ownServer) // no endpoint: the model can't be reached
         func recording(_ id: String, at startedAt: String, saying text: String) throws -> Recording {
             let dir = tmp.appendingPathComponent(id)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -387,15 +389,14 @@ private func fixture(_ name: String) throws -> URL {
 }
 
 @Suite struct EnvironmentTests {
-    /// Claude Code never gets Oatcake's API keys; the analysis helper does, as a key from your shell is its fallback too.
+    /// Oatcake's helpers (and the language model's server) don't get the calendar's private address.
     @Test func childEnvironments() {
-        let name = "ANTHROPIC_API_KEY"
+        let name = "OATCAKE_CALENDAR_URL"
         let before = ProcessInfo.processInfo.environment[name]
-        setenv(name, "from-the-shell", 1)
+        setenv(name, "https://calendar.example.com/private.ics", 1)
         defer { if let before { setenv(name, before, 1) } else { unsetenv(name) } }
         #expect(ShellEnvironment.childEnvironment()[name] == nil)
-        #expect(ShellEnvironment.childEnvironment(keepApiKeys: true)[name] == "from-the-shell")
-        #expect(ShellEnvironment.childEnvironment()["PATH"] == ShellEnvironment.path)
+        #expect(ShellEnvironment.childEnvironment()["PATH"] == ProcessInfo.processInfo.environment["PATH"])
     }
 }
 
@@ -425,13 +426,14 @@ private func fixture(_ name: String) throws -> URL {
 
 @Suite struct ModelErrorTests {
     @Test func plainWords() {
-        let unknown = explainModelError(#"claude exited 1: [claude-code:unrecognized_model] {"model":"claude-fable-5-2","query_source":"sdk"}"#)
-        #expect(unknown.contains("“claude-fable-5-2”") && unknown.contains("Settings › Summaries"))
+        let unknown = explainModelError(#"The model at http://localhost:11434/v1 returned 404: {"error":{"message":"model \"qwen9\" not found, try pulling it first"}}"#)
+        #expect(unknown.contains("isn’t on that server") && unknown.contains("Settings › Summaries"))
         #expect(explainModelError("Could not connect to the server.").contains("couldn’t be reached"))
-        #expect(explainModelError("claude exited 1: Invalid API key · Please run /login").contains("/login"))
-        #expect(explainModelError("The Anthropic API returned 429: rate limit exceeded").contains("usage limit"))
+        #expect(explainModelError(#"The model at http://127.0.0.1:5000/v1 returned 400: {"error":{"message":"the request exceeds the available context size"}}"#).contains("too long"))
         // Already plain: unchanged.
-        #expect(explainModelError("Add an Anthropic API key in Settings first.") == "Add an Anthropic API key in Settings first.")
+        for plain in [notLocalMessage, modelNotDownloadedMessage, outOfRoomMessage, "Set the endpoint and model in Settings first."] {
+            #expect(explainModelError(plain) == plain)
+        }
     }
 
     @Test func jargon() {
@@ -441,21 +443,38 @@ private func fixture(_ name: String) throws -> URL {
         #expect(config.jargonLine.hasSuffix("Automattic, WooCommerce."))
     }
 
-    /// A config written by an earlier version has none of the newer settings: they take their defaults.
-    @Test func partProviderSettings() throws {
-        // A provider's settings with a key missing keep the keys that are there. Settings from before 0.4,
-        // when the local model was "openai-compatible" under "openai", carry over.
-        let json = #"{"provider":"openai-compatible","openai":{"baseUrl":"http://localhost:11434/v1","model":"llama3.1"},"anthropic":{"effort":"high"}}"#
-        let llm = try JSONDecoder().decode(LlmConfig.self, from: Data(json.utf8))
-        #expect(llm.provider == .local)
-        #expect(llm.local.baseUrl == "http://localhost:11434/v1" && llm.local.model == "llama3.1" && llm.local.effort == .medium)
-        #expect(llm.anthropic.effort == .high && llm.anthropic.model == anthropicModels[0])
-        #expect(llm.claudeCode == LlmConfig.ClaudeCode())
-        // Saved again, it's in today's shape, which reads back the same.
-        let saved = try JSONEncoder().encode(llm)
-        let text = String(decoding: saved, as: UTF8.self)
-        #expect(text.contains(#""provider":"local""#) && text.contains(#""local":{"#) && !text.contains("openai"))
-        #expect(try JSONDecoder().decode(LlmConfig.self, from: saved) == llm)
+    /// Settings from when the choice was a provider: a model server of your own carries over, and
+    /// anything that sent transcripts elsewhere becomes the model Oatcake runs itself.
+    @Test func olderModelSettings() throws {
+        func read(_ json: String) throws -> LlmConfig { try JSONDecoder().decode(LlmConfig.self, from: Data(json.utf8)) }
+        let own = LocalModels.recommended().id
+        #expect(try read(#"{"provider":"claude-code","claudeCode":{"model":"opus","effort":"high"}}"#) == LlmConfig(model: own))
+        #expect(try read(#"{"provider":"anthropic","anthropic":{"model":"claude-opus-4-5"}}"#) == LlmConfig(model: own))
+        #expect(try read(#"{"provider":"openai-compatible","openai":{"baseUrl":"https://api.openai.com/v1","model":"gpt"}}"#).model == own)
+        for json in [#"{"provider":"local","local":{"baseUrl":"http://localhost:11434/v1","model":"llama3.1","effort":"low"}}"#,
+                     #"{"provider":"openai-compatible","openai":{"baseUrl":"http://localhost:11434/v1","model":"llama3.1"}}"#] {
+            let llm = try read(json)
+            #expect(llm.model == LlmConfig.ownServer && llm.own.baseUrl == "http://localhost:11434/v1" && llm.own.model == "llama3.1")
+            // Saved again, it's in today's shape, which reads back the same.
+            let saved = try JSONEncoder().encode(llm)
+            #expect(!String(decoding: saved, as: UTF8.self).contains("provider"))
+            #expect(try JSONDecoder().decode(LlmConfig.self, from: saved) == llm)
+        }
+        // Today's shape: one of Oatcake's models by name. A name it doesn't know is the recommended one.
+        #expect(try read(#"{"model":"qwen3-4b"}"#).model == "qwen3-4b")
+        #expect(try read(#"{"model":"gpt-9"}"#).model == own)
+        // Reasoning starts where each task did best, and a switch that's been set is kept.
+        let start = try read(#"{"model":"qwen3-8b"}"#).reasoning
+        #expect(start.summary && !start.todos && start.names && start.ask)
+        let set = try read(#"{"model":"qwen3-8b","reasoning":{"todos":true,"ask":false}}"#)
+        #expect(set.reasoning.summary && set.reasoning.todos && set.reasoning.names && !set.reasoning.ask)
+        #expect(try JSONDecoder().decode(LlmConfig.self, from: JSONEncoder().encode(set)) == set)
+        // The summary's instructions are Oatcake's own until you write yours.
+        var config = Config.defaults()
+        #expect(config.summaryTask == defaultSummaryInstructions)
+        config.summaryInstructions = "  Three bullet points, in French.\n"
+        #expect(config.summaryTask == "Three bullet points, in French.")
+        #expect(try JSONDecoder().decode(Config.self, from: Data(encodeJSON(config).utf8)).summaryInstructions == config.summaryInstructions)
     }
 
     @Test func localModelsOnly() async throws {
@@ -469,15 +488,38 @@ private func fixture(_ name: String) throws -> URL {
                         "https://localhost.example.com/v1", "ftp://localhost/v1", "localhost:11434", ""] {
             #expect(!isLocalEndpoint(address), "\(address)")
         }
-        // A local model pointed somewhere else is refused before anything is sent.
-        var config = LlmConfig(provider: .local)
-        config.local.baseUrl = "https://api.openai.com/v1"
-        config.local.model = "gpt"
-        await #expect(throws: OatcakeError(notLocalMessage)) { _ = try await makeLlm(config).complete(system: "", prompt: "Hello") }
-        // That refusal is shown as it is, not taken for a lost connection.
-        #expect(explainModelError(notLocalMessage) == notLocalMessage)
-        // No key is kept for it any more.
-        #expect(SecretName.allCases.map(\.rawValue) == ["anthropic", "calendar"])
+        // A server of your own pointed somewhere else is refused before anything is sent.
+        var config = LlmConfig(model: LlmConfig.ownServer)
+        config.own.baseUrl = "https://api.openai.com/v1"
+        config.own.model = "gpt"
+        await #expect(throws: OatcakeError(notLocalMessage)) {
+            _ = try await withModel(config, tokens: 100) { chat, _ in try await chat.complete([ChatMessage("user", "Hello")]) }
+        }
+        // No key is kept for a model any more.
+        #expect(SecretName.allCases.map(\.rawValue) == ["calendar"])
+    }
+
+    /// Which model a Mac starts with, and how much it's given to read at once, go by its memory.
+    @Test func modelsByMemory() {
+        let big = LocalModels.all[0], small = LocalModels.all[1]
+        #expect(LocalModels.recommended(memory: 8) == small && LocalModels.recommended(memory: 16) == big && LocalModels.recommended(memory: 36) == big)
+        #expect(!LocalModels.fits(big, memory: 8) && LocalModels.fits(small, memory: 8) && LocalModels.fits(big, memory: 16))
+        #expect(LocalModels.maxContext(small, memory: 8) == 16_384)
+        #expect(LocalModels.maxContext(big, memory: 16) == 32_768)
+        #expect(LocalModels.maxContext(big, memory: 36) == 131_072)
+        // The smallest window that holds the job, so no more memory is taken than it needs.
+        #expect(LocalModels.context(forTokens: 3_000) == 8_192 && LocalModels.context(forTokens: 20_000) == 24_576)
+        #expect(LocalModels.context(forTokens: 500_000) == 131_072)
+        // A window stretched past the model's own is for a text that needs it: a job that fits never
+        // borrows a server that's running stretched, and a bigger window of the same kind is shared.
+        #expect(LocalModels.stretch(32_768) == 1 && LocalModels.stretch(49_152) == 2 && LocalModels.stretch(131_072) == 4)
+        #expect(LocalModels.serves(running: 32_768, needed: 8_192) && LocalModels.serves(running: 65_536, needed: 49_152))
+        #expect(!LocalModels.serves(running: 49_152, needed: 32_768) && !LocalModels.serves(running: 16_384, needed: 32_768))
+        // The files are the ones that were measured: a fixed revision, with its size and checksum.
+        for model in LocalModels.all {
+            #expect(model.url.hasPrefix("https://huggingface.co/Qwen/") && model.url.contains("/resolve/") && model.url.hasSuffix(model.file))
+            #expect(model.sha256.count == 64 && model.bytes > 2_000_000_000)
+        }
     }
 
     @Test func olderConfig() throws {
@@ -514,6 +556,379 @@ private func fixture(_ name: String) throws -> URL {
         #expect(names.allSatisfy(callPlaceholders.contains))
         #expect(zip(names, names.dropFirst()).allSatisfy { $0 != $1 })
         #expect(callPlaceholder(for: "a", lineAt: 12.4) == names[1])
+    }
+}
+
+/// A small HTTP server on this Mac's own address, standing in for the language model's server (and
+/// for the site a model is downloaded from). It answers each request with what `handler` returns.
+final class StandIn: @unchecked Sendable {
+    struct Request: Sendable {
+        var path: String
+        var headers: [String: String]
+        var body: Data
+        var json: [String: Any] { (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:] }
+        /// The system and user messages of a chat request.
+        var messages: (system: String, user: String) {
+            let all = json["messages"] as? [[String: Any]] ?? []
+            func content(_ role: String) -> String { all.last { $0["role"] as? String == role }?["content"] as? String ?? "" }
+            return (content("system"), content("user"))
+        }
+    }
+    struct Response: Sendable {
+        var status = 200
+        var headers: [String: String] = [:]
+        var body = Data()
+        /// A chat completion whose message is `content`.
+        static func chat(_ content: String) -> Response {
+            let json: [String: Any] = ["choices": [["message": ["role": "assistant", "content": content], "finish_reason": "stop"]]]
+            return Response(body: try! JSONSerialization.data(withJSONObject: json))
+        }
+    }
+
+    private let listener: NWListener
+    private let handler: @Sendable (Request) -> Response
+    private let lock = NSLock()
+    private var seen: [Request] = []
+    var requests: [Request] { lock.withLock { seen } }
+    var port: Int { Int(listener.port?.rawValue ?? 0) }
+    var address: String { "http://127.0.0.1:\(port)" }
+
+    init(_ handler: @escaping @Sendable (Request) -> Response) async throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        self.handler = handler
+        listener.newConnectionHandler = { [weak self] connection in self?.serve(connection) }
+        let listener = listener
+        try await withCheckedThrowingContinuation { (ready: CheckedContinuation<Void, Error>) in
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    listener.stateUpdateHandler = nil
+                    ready.resume()
+                case .failed(let error):
+                    listener.stateUpdateHandler = nil
+                    ready.resume(throwing: error)
+                default: break
+                }
+            }
+            listener.start(queue: .global())
+        }
+    }
+
+    deinit { listener.cancel() }
+
+    /// A model server that answers each chat request with what `reply` returns.
+    static func model(_ reply: @escaping @Sendable (Request) -> String) async throws -> StandIn {
+        try await StandIn { .chat(reply($0)) }
+    }
+
+    /// Settings that send every request for the model here.
+    var config: Config {
+        var config = Config.defaults()
+        config.myName = "Sam Taylor"
+        config.llm = LlmConfig(model: LlmConfig.ownServer)
+        config.llm.own.baseUrl = address + "/v1"
+        config.llm.own.model = "stand-in"
+        return config
+    }
+
+    private func serve(_ connection: NWConnection) {
+        connection.start(queue: .global())
+        var buffer = Data()
+        func read() {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, done, error in
+                if let data { buffer.append(data) }
+                if let request = Self.parse(buffer) {
+                    self.lock.withLock { self.seen.append(request) }
+                    let response = self.handler(request)
+                    var head = "HTTP/1.1 \(response.status) OK\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
+                    for (name, value) in response.headers { head += "\(name): \(value)\r\n" }
+                    connection.send(content: Data((head + "\r\n").utf8) + response.body, completion: .contentProcessed { _ in connection.cancel() })
+                } else if done || error != nil {
+                    connection.cancel()
+                } else {
+                    read()
+                }
+            }
+        }
+        read()
+    }
+
+    /// A whole request, once all of it has arrived.
+    private static func parse(_ data: Data) -> Request? {
+        guard let end = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+        let lines = String(decoding: data[..<end.lowerBound], as: UTF8.self).components(separatedBy: "\r\n")
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            headers[line[..<colon].lowercased()] = String(line[line.index(after: colon)...]).trimmed
+        }
+        let body = data[end.upperBound...]
+        guard body.count >= Int(headers["content-length"] ?? "0") ?? 0 else { return nil }
+        let first = lines.first?.split(separator: " ") ?? []
+        return Request(path: first.count > 1 ? String(first[1]) : "", headers: headers, body: Data(body))
+    }
+}
+
+/// A Meetings folder for a test, with a way to put meetings in it.
+private struct TestMeetings {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-model-\(UUID().uuidString)")
+
+    func write(_ rel: String, _ file: MeetingFile, _ text: String, meta: String = "{}") throws {
+        let dir = root.appendingPathComponent(rel)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: dir.appendingPathComponent("meeting.json").path) {
+            try meta.write(to: dir.appendingPathComponent("meeting.json"), atomically: true, encoding: .utf8)
+        }
+        try text.write(to: dir.appendingPathComponent(file.rawValue), atomically: true, encoding: .utf8)
+    }
+
+    func remove() { try? FileManager.default.removeItem(at: root) }
+}
+
+@Suite struct LocalModelTests {
+    /// What goes to the model's server: Qwen's own sampling for each mode, its reasoning switch, the
+    /// shape a reply must fit, and the key Oatcake made up for its own server.
+    @Test func requests() async throws {
+        let server = try await StandIn.model { _ in "<think>\nLet me see.\n</think>\n\nOK" }
+        let own = LocalChat(baseUrl: server.address + "/v1", model: "qwen3-8b", key: "made-up", qwen: true)
+        #expect(await own.isReady() && server.requests.last?.path == "/health")
+        #expect(try await own.complete([ChatMessage("system", "Be brief."), ChatMessage("user", "Say OK.")], schema: todosSchema) == "OK")
+        #expect(try await own.complete([ChatMessage("user", "Say OK.")], think: false, maxTokens: 20) == "OK")
+        let sent = server.requests.filter { $0.path == "/v1/chat/completions" }
+        #expect(sent.count == 2 && sent.allSatisfy { $0.headers["authorization"] == "Bearer made-up" })
+        let thinking = sent[0].json, plain = sent[1].json
+        #expect(thinking["temperature"] as? Double == 0.6 && thinking["top_p"] as? Double == 0.95 && thinking["top_k"] as? Int == 20)
+        #expect(thinking["presence_penalty"] as? Double == 1.5 && thinking["min_p"] as? Int == 0 && thinking["cache_prompt"] as? Bool == true)
+        #expect((thinking["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
+        #expect(((thinking["response_format"] as? [String: Any])?["json_schema"] as? [String: Any])?["schema"] != nil)
+        #expect(thinking["max_tokens"] as? Int == 8_192 && sent[0].messages.system == "Be brief.")
+        #expect(plain["temperature"] as? Double == 0.7 && plain["top_p"] as? Double == 0.8 && plain["max_tokens"] as? Int == 20)
+        #expect((plain["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false && plain["response_format"] == nil)
+
+        // A server of your own gets no key and no switch it may not know.
+        let yours = try await withModel(server.config.llm, tokens: 100) { chat, context in
+            #expect(context == LocalModels.nativeContext)
+            return try await chat.complete([ChatMessage("user", "Say OK.")])
+        }
+        #expect(yours == "OK" && server.requests.last?.headers["authorization"] == nil && server.requests.last?.json["chat_template_kwargs"] == nil)
+
+        // A reply that's all reasoning, cut off before the answer, is an error rather than an empty summary.
+        let cut = try await StandIn { _ in
+            StandIn.Response(body: Data(#"{"choices":[{"message":{"content":""},"finish_reason":"length"}]}"#.utf8))
+        }
+        await #expect(throws: OatcakeError(outOfRoomMessage)) {
+            _ = try await LocalChat(baseUrl: cut.address + "/v1", model: "m").complete([ChatMessage("user", "Hello")])
+        }
+    }
+
+    /// A summary is two requests about the same transcript: the summary, following the instructions
+    /// in Settings, then the to-dos as JSON. The second begins exactly as the first did, which is what
+    /// lets the model answer it without reading the transcript again.
+    @Test func summaryAndTodos() async throws {
+        let meetings = TestMeetings()
+        defer { meetings.remove() }
+        let rel = "Team/2026-11-09 1000 Weekly sync"
+        try meetings.write(rel, .transcript, "**[00:00] Sam Taylor:** Morning. Alex, where are we with the deck?\n\n**[00:04] Alex Kim:** I will send the deck on Friday.\n",
+                           meta: #"{"title":"Weekly sync","startedAt":"2026-11-09T10:00:00.000Z","participants":["Sam Taylor","Alex Kim"]}"#)
+        try meetings.write(rel, .notes, "- [00:03] Deck timing\n")
+        let server = try await StandIn.model { request in
+            request.json["response_format"] == nil
+                ? "Here is the summary.\n\n## Deck\n- Alex Kim will send the deck on Friday.\n"
+                : #"{"todos":[{"task":"send the deck","owner":"Alex Kim","due":"Friday","at":"[00:04]"},{"task":"Book a room","owner":"null","due":null,"at":null}]}"#
+        }
+        var config = server.config
+        config.outputDir = meetings.root.path
+        config.jargon = ["WooCommerce"]
+        config.summaryInstructions = "Write three bullet points, in French."
+
+        let draft = try await draftSummary(config, meeting: rel)
+        #expect(draft.summary == "## Deck\n- Alex Kim will send the deck on Friday.\n")
+        #expect(draft.todo == "- [ ] Send the deck — Alex Kim — due Friday — [00:04]\n- [ ] Book a room\n")
+        let sent = server.requests.map(\.messages)
+        #expect(sent.count == 2 && sent[0].system == sent[1].system)
+        #expect(sent[0].user.hasSuffix("Write three bullet points, in French.") && !sent[0].user.contains("Cover every topic"))
+        #expect(sent[1].user.contains(#"{"todos": ["#) && server.requests[0].json["response_format"] == nil)
+        let shared = try #require(sent[0].user.range(of: "I will send the deck on Friday.\n\n")).upperBound
+        #expect(sent[1].user.hasPrefix(sent[0].user[..<shared]))
+        #expect(sent[0].user.hasPrefix("Meeting: Weekly sync\nParticipants: Sam Taylor, Alex Kim\n") && sent[0].user.contains("WooCommerce") && sent[0].user.contains("[00:03] Deck timing"))
+        // The summary is reasoned over and the to-dos aren't, until Settings says otherwise: 0.6 is Qwen's sampling with reasoning, 0.7 without.
+        #expect(server.requests.map { $0.json["temperature"] as? Double } == [0.6, 0.7])
+
+        // Oatcake's own instructions when there are none of yours.
+        config.summaryInstructions = ""
+        config.llm.reasoning.summary = false
+        config.llm.reasoning.todos = true
+        _ = try await draftSummary(config, meeting: rel)
+        #expect(server.requests[2].messages.user.hasSuffix(defaultSummaryInstructions))
+        #expect(server.requests[2...].map { $0.json["temperature"] as? Double } == [0.7, 0.6])
+    }
+
+    @Test func summaryPieces() {
+        // Anything before the first heading goes, and a code fence around the lot.
+        #expect(summaryBody("Sure!\n\n## Launch\n- Done.\n") == "## Launch\n- Done.")
+        #expect(summaryBody("```markdown\n## Launch\n- Done.\n```") == "## Launch\n- Done.")
+        #expect(summaryBody("Three points, as asked.") == "Three points, as asked.")
+        // To-dos: what the model didn't know is left out, however it said so.
+        let lines = todoLines(#"Here: {"todos":[{"task":"email Priya the figures","owner":"Sam","due":"none","at":"1:02:03"},{"task":"","owner":"Alex","due":null,"at":null},{"task":"Review — the plan","owner":"N/A","due":"Fri, Oct 30","at":"soon"}]}"#)
+        #expect(lines == ["- [ ] Email Priya the figures — Sam — [1:02:03]", "- [ ] Review, the plan — due Fri, Oct 30"])
+        #expect(todoLines("no JSON here").isEmpty && todoLines(#"{"todos":[]}"#).isEmpty)
+        // A long call is cut between turns, and nothing is lost or repeated.
+        let turns = (0..<40).map { "**[\(clock(Double($0) * 30))] Alex:** " + String(repeating: "word ", count: 60).trimmed }
+        let whole = turns.joined(separator: "\n\n")
+        let parts = splitTranscript(whole, tokens: 800)
+        #expect(parts.count > 3 && parts.joined(separator: "\n\n") == whole)
+        #expect(parts.allSatisfy { LocalModels.tokens(in: $0) <= 800 })
+        #expect(splitTranscript(whole, tokens: 100_000) == [whole])
+    }
+
+    /// A name is only suggested when it was said: a small model asked for one will sometimes invent it.
+    @Test func suggestedNames() async throws {
+        let transcript = "Sam Taylor (recorder): Priya, where are we with pricing?\nSpeaker A: Nearly there.\nSpeaker B: I agree with Priya."
+        let reply = #"{"speakers":[{"speaker":"Speaker A","name":"Priya","quote":"Priya, where are we"},{"speaker":"B","name":"Jordan Lee","quote":null},{"speaker":"C","name":"Sam","quote":"x"},{"speaker":"Z","name":"Priya","quote":"x"}]}"#
+        let names = namesIn(reply, unknown: ["A", "B", "C"], transcript: transcript, myName: "Sam Taylor")
+        // B's name was never said, C's is your own, and Z wasn't asked about.
+        #expect(names == ["A": Suggestion(name: "Priya", how: .transcript, detail: "Priya, where are we")])
+        #expect(namesIn(#"{"speakers":[{"speaker":"A","name":"null","quote":"null"},{"speaker":"B","name":"Speaker B","quote":null}]}"#, unknown: ["A", "B"], transcript: transcript, myName: "Sam Taylor").isEmpty)
+
+        // From a processed recording: the voice nobody recognised gets its name, one that was recognised keeps its own.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-names-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let known = Suggestion(name: "Alex Kim", how: .voice, detail: "voice match 0.81")
+        let analysis = Analysis(title: "Pricing", startedAt: "2026-11-10T14:00:00.000Z", endedAt: "2026-11-10T14:25:00.000Z",
+                                lines: [Line(speaker: me, start: 1, end: 3, text: "Priya, where are we with pricing?"), Line(speaker: "A", start: 4, end: 6, text: "Nearly there."),
+                                        Line(speaker: "B", start: 7, end: 9, text: "Good.")],
+                                speakers: [SpeakerInfo(id: "A", seconds: 40, embedding: nil, suggestion: nil, quotes: []),
+                                           SpeakerInfo(id: "B", seconds: 30, embedding: nil, suggestion: known, quotes: [])],
+                                echoLinesRemoved: 0, me: nil, warnings: [], embeddingModel: voiceprintModel)
+        try encodeJSON(analysis).write(to: dir.appendingPathComponent("analysis.json"), atomically: true, encoding: .utf8)
+        #expect(hasUnnamedVoices(dir))
+        let server = try await StandIn.model { _ in #"{"speakers":[{"speaker":"A","name":"Priya","quote":"Priya, where are we"},{"speaker":"B","name":"Priya","quote":null}]}"# }
+        await suggestNames(dir, config: server.config)
+        let named = try readJSON(Analysis.self, dir.appendingPathComponent("analysis.json"))
+        #expect(named.speakers.map(\.suggestion?.name) == ["Priya", "Alex Kim"] && named.warnings.isEmpty && !hasUnnamedVoices(dir))
+        let asked = try #require(server.requests.first)
+        #expect(asked.messages.user.contains("Sam Taylor (recorder): Priya, where are we with pricing?\nSpeaker A: Nearly there.\nAlex Kim: Good."))
+        #expect(asked.messages.user.contains("Unidentified speakers: Speaker A\n") && asked.json["response_format"] != nil)
+        #expect(asked.json["temperature"] as? Double == 0.6)
+
+        // A model that can't be reached is noted for the review screen, and the analysis is left as it was.
+        try encodeJSON(analysis).write(to: dir.appendingPathComponent("analysis.json"), atomically: true, encoding: .utf8)
+        let broken = try await StandIn { _ in StandIn.Response(status: 500, body: Data("no".utf8)) }
+        await suggestNames(dir, config: broken.config)
+        let skipped = try readJSON(Analysis.self, dir.appendingPathComponent("analysis.json"))
+        #expect(skipped.speakers[0].suggestion == nil && skipped.warnings.first?.hasPrefix("Name suggestions skipped: ") == true)
+    }
+
+    /// Ask: the open meeting whole, then (only when the model says the question reaches beyond it)
+    /// what a search of the others finds. The model's tags become links to the meetings and times.
+    @Test func ask() async throws {
+        let meetings = TestMeetings()
+        defer { meetings.remove() }
+        let sync = "Team/2026-11-09 1000 Weekly sync", earlier = "Team/2026-11-02 1000 Weekly sync", review = "Design/2026-11-06 1400 Design review"
+        try meetings.write(sync, .transcript, "**[00:00] Sam Taylor:** Morning.\n\n**[12:34] Alex Kim:** I will book the café for the offsite.\n",
+                           meta: #"{"title":"Weekly sync","startedAt":"2026-11-09T10:00:00.000Z","participants":["Sam Taylor","Alex Kim"]}"#)
+        try meetings.write(sync, .todo, "- [x] Book the café — Alex Kim\n")
+        var config = Config.defaults()
+        config.outputDir = meetings.root.path
+
+        // On its own: one request, and a bare time can only be in this meeting.
+        let alone = try await StandIn.model { _ in "Alex Kim said he would book it [M1 12:34], which is done [M1]. See also [00:00]. A link: [x](https://example.com)." }
+        config.llm = alone.config.llm
+        let first = try await OatcakeCore.ask(config, meeting: sync, question: "Who is booking the café?")
+        let here = "Team/2026-11-09%201000%20Weekly%20sync"
+        #expect(first == "Alex Kim said he would book it [12:34](\(here)#12:34), which is done [Weekly sync · Nov 9](\(here)). See also [00:00](\(here)#00:00). A link: [x](https://example.com).")
+        #expect(alone.requests.count == 1 && alone.requests[0].json["temperature"] as? Double == 0.6)
+        let only = alone.requests[0].messages
+        #expect(only.system.contains("[M1 12:34]") && only.user.hasPrefix("[M1] Weekly sync · Mon, Nov 9, 2026 (the meeting "))
+        #expect(only.user.contains("To-dos ([x] = done):\n- [x] Book the café — Alex Kim") && only.user.contains("**[12:34] Alex Kim:** I will book the café"))
+        #expect(only.user.hasSuffix("Question: Who is booking the café?"))
+
+        // With other meetings: the model is asked first whether the question reaches them.
+        try meetings.write(earlier, .summary, "## Offsite\n- The offsite is in March.\n", meta: #"{"title":"Weekly sync","startedAt":"2026-11-02T10:00:00.000Z"}"#)
+        try meetings.write(earlier, .transcript, "**[03:10] Alex Kim:** The offsite budget is five thousand.\n\n**[04:00] Sam Taylor:** Fine.\n")
+        try meetings.write(review, .summary, "## Colours\n- New tokens agreed.\n", meta: #"{"title":"Design review","startedAt":"2026-11-06T14:00:00.000Z"}"#)
+        let stays = try await StandIn.model { $0.json["response_format"] != nil ? #"{"beyond":false,"search":[]}"# : "Alex Kim [M1 12:34]." }
+        config.llm = stays.config.llm
+        config.llm.reasoning.ask = false
+        _ = try await OatcakeCore.ask(config, meeting: sync, question: "Who is booking the café?")
+        #expect(stays.requests.count == 2 && !stays.requests[1].messages.user.contains("[M2]"))
+        #expect(stays.requests.map { $0.json["temperature"] as? Double } == [0.7, 0.7])
+
+        let reaches = try await StandIn.model {
+            $0.json["response_format"] != nil ? #"{"beyond":true,"search":["offsite budget","zebra"]}"#
+                : "The budget is five thousand [M2 03:10], and Alex Kim is booking the café [M1, 12:34]. Nothing on colours [M3]. Not [M7]."
+        }
+        config.llm = reaches.config.llm
+        let history = [AskExchange(question: "Who is booking the café?", answer: "Alex Kim [12:34](\(here)#12:34).")]
+        let second = try await OatcakeCore.ask(config, meeting: sync, question: "What was the budget for the offsite?", history: history)
+        let before = "Team/2026-11-02%201000%20Weekly%20sync"
+        #expect(second == "The budget is five thousand [Weekly sync · Nov 2 · 03:10](\(before)#03:10), and Alex Kim is booking the café [12:34](\(here)#12:34). Nothing on colours [M3]. Not [M7].")
+        let route = reaches.requests[0].messages.user, answer = reaches.requests[1].messages.user
+        // Both begin with the open meeting, word for word: read once, kept for the answer and the next question.
+        let open = try #require(route.range(of: "I will book the café for the offsite.")).upperBound
+        #expect(answer.hasPrefix(route[..<open]) && route.hasSuffix("when \"beyond\" is false."))
+        // The earlier meeting in the series was found by the search; the design review, which has neither phrase, wasn't.
+        #expect(answer.contains("[M2] Weekly sync · Mon, Nov 2, 2026\n") && answer.contains("- The offsite is in March."))
+        #expect(answer.contains("**[03:10] Alex Kim:** The offsite budget is five thousand.") && !answer.contains("**[04:00]") && !answer.contains("Design review"))
+        #expect(answer.contains("Earlier in this conversation:\nQuestion: Who is booking the café?\nAnswer: Alex Kim 12:34."))
+        #expect(answer.hasSuffix("Question: What was the budget for the offsite?"))
+    }
+
+    @Test func askPieces() {
+        // A tag with several times, a time past the hour, and a path that needs encoding.
+        let odd = "Board (Q4)/2026-10-29 1630 Budget & plan #2"
+        #expect(citationLinks("See [M1 1:02:03, 12:34].", sources: [odd]) == "See [1:02:03](Board%20%28Q4%29/2026-10-29%201630%20Budget%20%26%20plan%20%232#1:02:03), [12:34](Board%20%28Q4%29/2026-10-29%201630%20Budget%20%26%20plan%20%232#12:34).")
+        // With more than one meeting in front of the model, a bare time is left alone: it could be in any of them.
+        #expect(citationLinks("At [12:34].", sources: ["a/2026-10-29 1630 X", "b/2026-10-30 1630 Y"]) == "At [12:34].")
+        #expect(citationLinks("Already [M1](x) a link.", sources: ["a/2026-10-29 1630 X"]) == "Already [M1](x) a link.")
+        // A transcript that fits is given whole; one that doesn't, as the parts that share a word with the question.
+        let turns = (0..<60).map { "**[\(clock(Double($0) * 60))] Alex:** " + ($0 == 40 ? "The zebra budget is nine thousand." : String(repeating: "filler ", count: 80).trimmed) }
+        let whole = turns.joined(separator: "\n\n")
+        #expect(transcriptFor(whole, question: "anything", tokens: 100_000) == (whole, true))
+        let near = transcriptFor(whole, question: "What was the zebra budget?", tokens: 2_000)
+        #expect(!near.whole && near.text == turns[39...41].joined(separator: "\n\n"))
+        let start = transcriptFor(whole, question: "What happened?", tokens: 2_000)
+        #expect(!start.whole && start.text.hasPrefix(turns[0]) && LocalModels.tokens(in: start.text) <= 2_000)
+        #expect(questionWords("What did Priya say about the Café budget?") == ["priya", "cafe", "budget"])
+    }
+
+    /// A model's file is carried on from where an earlier download stopped, and only kept when it's
+    /// the file that was expected.
+    @Test func downloads() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-download-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let content = Data((0..<300_000).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ $0 / 7) })
+        let server = try await StandIn { request in
+            guard let range = request.headers["range"], let from = Int(range.replacingOccurrences(of: "bytes=", with: "").dropLast()) else {
+                return StandIn.Response(body: content)
+            }
+            return StandIn.Response(status: 206, headers: ["Content-Range": "bytes \(from)-\(content.count - 1)/\(content.count)"], body: content[from...])
+        }
+        func model(sha256: String) -> LocalModel {
+            LocalModel(id: "test", title: "Test model", detail: "", file: "test.gguf", url: server.address + "/test.gguf", sha256: sha256,
+                       bytes: Int64(content.count), baseMemory: 1, memoryPerThousandTokens: 0.1)
+        }
+        let good = model(sha256: SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined())
+        let file = dir.appendingPathComponent("test.gguf"), part = file.appendingPathExtension("part")
+
+        // The first third is here already: only the rest is asked for.
+        try content[..<100_000].write(to: part)
+        try await ModelDownload.fetch(good, to: file) { _ in }
+        #expect(try Data(contentsOf: file) == content && !FileManager.default.fileExists(atPath: part.path))
+        #expect(server.requests.count == 1 && server.requests[0].headers["range"] == "bytes=100000-")
+        // It's here now: nothing is fetched.
+        try await ModelDownload.fetch(good, to: file) { _ in }
+        #expect(server.requests.count == 1)
+
+        // From nothing, and a file that isn't the one expected is thrown away.
+        try FileManager.default.removeItem(at: file)
+        await #expect(throws: OatcakeError.self) { try await ModelDownload.fetch(model(sha256: String(repeating: "0", count: 64)), to: file) { _ in } }
+        #expect(!FileManager.default.fileExists(atPath: file.path) && !FileManager.default.fileExists(atPath: part.path))
+        #expect(server.requests.last?.headers["range"] == nil)
     }
 }
 

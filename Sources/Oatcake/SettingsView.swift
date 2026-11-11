@@ -1,13 +1,12 @@
 import OatcakeCore
 import SwiftUI
 
-private let effortHint = "Higher thinks longer: more careful summaries and name guesses, but slower and more usage."
-
 /// The Settings window, in panes. Every change is saved as it's made; there's no Save button.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @ViewState private var devices: [InputDevice]?
     @ViewState private var jargon = ""
+    @ViewState private var instructions = ""
     @AppStorage("settingsPane") private var pane = "general"
 
     var body: some View {
@@ -16,7 +15,7 @@ struct SettingsView: View {
             Form { calendar }.formStyle(.grouped).tabItem { Label("Calendar", systemImage: "calendar") }.tag("calendar")
             Form { PeopleSection() }.formStyle(.grouped).tabItem { Label("People", systemImage: "person.2") }.tag("people")
             Form { transcription }.formStyle(.grouped).tabItem { Label("Transcription", systemImage: "waveform") }.tag("transcription")
-            Form { llmSection; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
+            Form { llmSection; reasoningSection; instructionsSection; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
             Form { storage }.formStyle(.grouped).tabItem { Label("Storage", systemImage: "folder") }.tag("storage")
             Form { UpdatesSection() }.formStyle(.grouped).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
         }
@@ -24,6 +23,7 @@ struct SettingsView: View {
         .task { devices = (try? await Recordings.listInputs()) ?? [] }
         .onAppear {
             jargon = model.config.jargon.joined(separator: ", ")
+            instructions = model.config.summaryTask
             // The Electron version's names for the two transcription choices read as the new ones.
             let key = SpeechModels.asrChoice(model.config.asrModel).key
             if key != model.config.asrModel { model.saveConfig(with(model.config) { $0.asrModel = key }) }
@@ -175,85 +175,103 @@ struct SettingsView: View {
     @ViewBuilder private var llmSection: some View {
         let llm = model.config.llm
         Section {
-            Picker("Provider", selection: bindLlm(\.provider)) {
-                Text("Claude Code").tag(LlmProvider.claudeCode)
-                Text("Anthropic API").tag(LlmProvider.anthropic)
-                Text("Local model").tag(LlmProvider.local)
+            Picker("Language model", selection: bindLlm(\.model)) {
+                ForEach(LocalModels.all) { choice in
+                    VStack(alignment: .leading) {
+                        Text(choice.title + (choice == LocalModels.recommended() ? " · recommended for this Mac" : ""))
+                        Text(choice.detail).settingsHint()
+                        if !LocalModels.fits(choice) {
+                            Text("This Mac has \(Int(LocalModels.physicalMemory.rounded())) GB of memory, which is too little for it.").settingsHint(.amber)
+                        }
+                    }
+                    .tag(choice.id)
+                }
+                VStack(alignment: .leading) {
+                    Text("A model server of my own")
+                    Text("Ollama, LM Studio or another server with the same chat API, on this Mac or your own network.").settingsHint()
+                }
+                .tag(LlmConfig.ownServer)
             }
-            .pickerStyle(.segmented)
-            switch llm.provider {
-            case .claudeCode:
-                Picker("Model", selection: bindLlm(\.claudeCode.model)) {
-                    Text("Default").tag("")
-                    Text("Sonnet").tag("sonnet")
-                    Text("Opus").tag("opus")
-                    Text("Haiku").tag("haiku")
-                }
-                effortPicker(bindLlm(\.claudeCode.effort))
-            case .anthropic:
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("API key")
-                    SecretField(name: .anthropic, placeholder: "sk-ant-…")
-                }
-                Picker("Model", selection: bindLlm(\.anthropic.model)) {
-                    ForEach(Array(Set(anthropicModels + [llm.anthropic.model])).sorted(), id: \.self) { Text($0).tag($0) }
-                }
-                effortPicker(bindLlm(\.anthropic.effort))
-            case .local:
-                TextField(text: bindLlm(\.local.baseUrl), prompt: Text("e.g. http://localhost:11434/v1")) {
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            if let chosen = LocalModels.find(llm.model) {
+                ModelRow(chosen: chosen)
+            } else {
+                TextField(text: bindLlm(\.own.baseUrl), prompt: Text("e.g. http://localhost:11434/v1")) {
                     Text("Endpoint").font(.body)
-                    if llm.local.baseUrl.trimmed.isEmpty {
+                    if llm.own.baseUrl.trimmed.isEmpty {
                         Text("Required").font(.callout).foregroundStyle(Color.amber)
-                    } else if !isLocalEndpoint(llm.local.baseUrl) {
+                    } else if !isLocalEndpoint(llm.own.baseUrl) {
                         Text("Has to be on this Mac or your network").font(.callout).foregroundStyle(Color.amber)
                     }
                 }
                 .font(.system(.body, design: .monospaced))
-                TextField(text: bindLlm(\.local.model), prompt: Text("e.g. llama3.1:70b")) {
+                TextField(text: bindLlm(\.own.model), prompt: Text("e.g. qwen3:14b")) {
                     Text("Model").font(.body)
-                    if llm.local.model.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
+                    if llm.own.model.trimmed.isEmpty { Text("Required").font(.callout).foregroundStyle(Color.amber) }
                 }
                 .font(.system(.body, design: .monospaced))
-                effortPicker(bindLlm(\.local.effort))
             }
-            TestRow(missing: llm.provider != .local ? nil
-                : llm.local.baseUrl.trimmed.isEmpty || llm.local.model.trimmed.isEmpty ? "Fill in the endpoint and model first."
-                : !isLocalEndpoint(llm.local.baseUrl) ? "The endpoint has to be on this Mac or your own network." : nil)
-                .id(llm.provider)
+            TestRow(missing: testBlocker(llm)).id(llm.model)
         } header: {
-            Text("Summaries and name suggestions")
+            Text("Language model")
         } footer: {
-            llmFoot(llm.provider).settingsHint(llm.provider == .claudeCode && !claudeInstalled ? .amber : .secondary)
+            Text("Writes summaries and to-dos, suggests names and answers questions. It runs on this Mac, and nothing from your calls is sent anywhere. A summary takes a little while to write; the transcript and your notes are saved first.")
+                .settingsHint()
         }
     }
 
-    private var claudeInstalled: Bool { ShellEnvironment.which("claude") != nil }
-
-    /// What the provider needs. For Claude Code: which sign-in it is, and how to get one.
-    private func llmFoot(_ provider: LlmProvider) -> Text {
-        switch provider {
-        case .claudeCode:
-            claudeInstalled
-                ? Text("Uses the sign-in of Claude Code, Anthropic’s command-line tool, on this Mac. The Claude desktop app’s sign-in is separate and isn’t used. To sign in or switch account, run `claude` in Terminal and type `/login`. No API key needed.")
-                : Text("Claude Code isn’t installed on this Mac. It’s Anthropic’s command-line tool, separate from the Claude desktop app: install it from [claude.com/claude-code](https://claude.com/claude-code), then run `claude` in Terminal once to sign in. Or choose another provider above.")
-        case .anthropic: Text("Billed to your Anthropic account. The key is kept in your Keychain.")
-        case .local: Text("A model running on this Mac or your own network, in Ollama, LM Studio or another server with the same chat API. Nothing is sent anywhere else. Name suggestions need a model that follows instructions well.")
-        }
-    }
-
-    private func effortPicker(_ binding: Binding<Effort>) -> some View {
-        LabeledContent {
-            Picker("Effort", selection: binding) {
-                Text("Low").tag(Effort.low)
-                Text("Medium").tag(Effort.medium)
-                Text("High").tag(Effort.high)
+    /// Whether the model thinks each task through first. For Oatcake's own models: a server of yours
+    /// decides for itself.
+    @ViewBuilder private var reasoningSection: some View {
+        if LocalModels.find(model.config.llm.model) != nil {
+            Section {
+                Toggle("Summaries", isOn: bindLlm(\.reasoning.summary))
+                Toggle("To-dos", isOn: bindLlm(\.reasoning.todos))
+                Toggle("Name suggestions", isOn: bindLlm(\.reasoning.names))
+                Toggle("Ask", isOn: bindLlm(\.reasoning.ask))
+            } header: {
+                Text("Reasoning")
+            } footer: {
+                Text("With reasoning on, the model thinks a task through before it replies. That takes longer and isn’t always better. When Oatcake was tested, summaries gave decisions to the right person more reliably with it, names were made up less often and answers kept to the question, but to-dos lost detail. So it starts on for everything except to-dos.")
+                    .settingsHint()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-        } label: {
-            Text("Effort")
-            Text(effortHint)
+        }
+    }
+
+    /// Why Test can't be pressed yet, if it can't.
+    private func testBlocker(_ llm: LlmConfig) -> String? {
+        let _ = model.modelsVersion
+        if let chosen = LocalModels.find(llm.model) { return LocalModels.isDownloaded(chosen) ? nil : "Download the model first." }
+        if llm.own.baseUrl.trimmed.isEmpty || llm.own.model.trimmed.isEmpty { return "Fill in the endpoint and model first." }
+        return isLocalEndpoint(llm.own.baseUrl) ? nil : "The endpoint has to be on this Mac or your own network."
+    }
+
+    /// What the model is told when it writes a summary. Yours to change; Oatcake's own comes back with one button.
+    @ViewBuilder private var instructionsSection: some View {
+        Section {
+            TextEditor(text: $instructions)
+                .font(.system(.callout, design: .monospaced))
+                .frame(minHeight: 120)
+                .scrollContentBackground(.hidden)
+                .accessibilityLabel("Summary instructions")
+                .onChange(of: instructions) {
+                    // Oatcake's own wording is kept as "none of your own", so a later improvement to it reaches you.
+                    let custom = instructions.trimmed == defaultSummaryInstructions.trimmed ? "" : instructions
+                    if custom != model.config.summaryInstructions { model.saveConfig(with(model.config) { $0.summaryInstructions = custom }) }
+                }
+            LabeledContent {
+                Button("Restore Default") { instructions = defaultSummaryInstructions }
+                    .disabled(instructions.trimmed == defaultSummaryInstructions.trimmed)
+            } label: {
+                Text(model.config.summaryInstructions.trimmed.isEmpty ? "Oatcake’s own instructions" : "Your instructions")
+                Text("Used for summaries written from now on.")
+            }
+        } header: {
+            Text("Summary instructions")
+        } footer: {
+            Text("What the model is told to write once it has read the transcript. Change the headings, the level of detail or the language to suit you. To-dos are collected separately and aren’t affected.")
+                .settingsHint()
         }
     }
 }
@@ -291,13 +309,19 @@ private struct TestRow: View {
     private func test() async {
         running = true
         let started = Date()
-        let llm = makeLlm(model.config.llm)
+        let llm = model.config.llm
         do {
             let reply = try await withThrowingTaskGroup(of: String.self) { group in
-                group.addTask { try await llm.complete(system: "Reply with the single word OK and nothing else.", prompt: "Say OK.") }
                 group.addTask {
-                    try await Task.sleep(for: .seconds(60))
-                    throw OatcakeError("No reply after 60 seconds")
+                    // A one-word reply needs no reasoning. Loading the model is most of the wait.
+                    try await withModel(llm, tokens: 100) { chat, _ in
+                        try await chat.complete([ChatMessage("system", "Reply with the single word OK and nothing else."), ChatMessage("user", "Say OK.")],
+                                                think: false, maxTokens: 20)
+                    }
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(120))
+                    throw OatcakeError("No reply after two minutes")
                 }
                 let first = try await group.next()!
                 group.cancelAll()
@@ -305,9 +329,51 @@ private struct TestRow: View {
             }
             result = (true, "Working: replied “\(reply.trimmed.prefix(40))” in \(String(format: "%.1f", Date().timeIntervalSince(started))) s.")
         } catch {
-            result = (false, String(error.localizedDescription.prefix(300)))
+            result = (false, String(explainModelError(error.localizedDescription).prefix(300)))
         }
         running = false
+    }
+}
+
+/// Settings › Summaries: whether the chosen model is on this Mac, with its download or removal.
+private struct ModelRow: View {
+    @Environment(AppModel.self) private var model
+    let chosen: LocalModel
+    @ViewState private var removing = false
+
+    var body: some View {
+        let _ = model.modelsVersion
+        if let fraction = model.modelDownloads[chosen.id] {
+            LabeledContent {
+                Button("Stop") { model.stopModelDownload(chosen) }
+            } label: {
+                Text("Downloading \(chosen.title)")
+                ProgressView(value: fraction).accessibilityLabel("Download progress")
+                Text("\(Int(fraction * 100))% of \(chosen.downloadSize). It carries on from here if it’s stopped.")
+            }
+        } else if LocalModels.isDownloaded(chosen) {
+            LabeledContent {
+                Button("Remove…") { removing = true }
+            } label: {
+                Text("\(chosen.title) is on this Mac")
+                Text("\(chosen.downloadSize), in Oatcake’s own folder.")
+            }
+            .alert("Remove \(chosen.title)?", isPresented: $removing) {
+                Button("Remove", role: .destructive) { model.removeModel(chosen) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Frees \(chosen.downloadSize). It’s downloaded again the next time it’s needed.")
+            }
+        } else {
+            let error = model.modelDownloadErrors[chosen.id]
+            LabeledContent {
+                Button(error == nil ? "Download Now" : "Try Again") { model.downloadModel(chosen) }
+            } label: {
+                Text("\(chosen.title) isn’t downloaded yet")
+                Text(error ?? "\(chosen.downloadSize), from Hugging Face. It downloads by itself during your first call, or when it’s first needed.")
+                    .foregroundStyle(error == nil ? Color.secondary : Color.red)
+            }
+        }
     }
 }
 
@@ -346,9 +412,9 @@ private struct GranolaRow: View {
 }
 
 /**
- * An API key or the calendar address. It's kept in the Keychain and never shown again, so a saved
- * one shows as a hint ("Saved · ends in 4f2a"). A new value saves on Return, on leaving the field,
- * or after a pause in typing.
+ * The calendar's private address. It's kept in the Keychain and never shown again, so a saved one
+ * shows as a hint ("Saved · calendar.google.com"). A new value saves on Return, on leaving the
+ * field, or after a pause in typing.
  */
 private struct SecretField: View {
     @Environment(AppModel.self) private var model

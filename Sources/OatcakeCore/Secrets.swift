@@ -1,17 +1,17 @@
-// API keys and the calendar's private address, typed into Settings, kept in your login Keychain.
-// The window can save one and learn whether one is saved, but never reads one back.
+// The calendar's private address, typed into Settings, kept in your login Keychain. The window can
+// save it and learn whether it's saved, but never reads it back. (It's the only secret left: the
+// language model runs on this Mac and needs no key.)
 
 import CommonCrypto
 import Foundation
 import Security
 
 public enum SecretName: String, CaseIterable, Sendable {
-    case anthropic, calendar
+    case calendar
 
     /// One already in the environment when Oatcake started (e.g. from your shell) is the fallback.
     var environmentVariable: String {
         switch self {
-        case .anthropic: "ANTHROPIC_API_KEY"
         case .calendar: "OATCAKE_CALENDAR_URL"
         }
     }
@@ -30,13 +30,10 @@ public enum Secrets {
     public static func describe(_ name: SecretName) -> (saved: Bool, hint: String) {
         guard let value = keychainRead(account: name.rawValue), !value.isEmpty else {
             let inherited = ProcessInfo.processInfo.environment[name.environmentVariable]
-            return (false, inherited != nil ? "Using the \(name == .calendar ? "address" : "key") from your shell" : "")
+            return (false, inherited != nil ? "Using the address from your shell" : "")
         }
-        if name == .calendar {
-            let host = URL(string: value.replacingOccurrences(of: "webcal:", with: "https:", options: [.anchored, .caseInsensitive]))?.host
-            return (true, host.map { "Saved · \($0)" } ?? "Saved")
-        }
-        return (true, "Saved · ends in \(value.suffix(4))")
+        let host = URL(string: value.replacingOccurrences(of: "webcal:", with: "https:", options: [.anchored, .caseInsensitive]))?.host
+        return (true, host.map { "Saved · \($0)" } ?? "Saved")
     }
 
     /// Saves a secret, or removes it when the value is blank.
@@ -74,9 +71,9 @@ public enum Secrets {
 
     // MARK: - No longer kept
 
-    /// Secrets Oatcake once kept and has no use for now: the key for an OpenAI-compatible service,
-    /// from when the third provider could be any address.
-    static let retired = ["openai"]
+    /// Secrets Oatcake once kept and has no use for now: the keys for the Anthropic API and for an
+    /// OpenAI-compatible service, from when summaries could be written by a model somewhere else.
+    static let retired = ["anthropic", "openai"]
 
     /// Removes them from the Keychain. Done at launch; there's nothing to remove after the first time.
     public static func forgetRetired() {

@@ -174,7 +174,7 @@ struct DetailView: View {
                 if let rec = model.live { LiveView(rec: rec) } else { blank }
             case .job(let id):
                 if let rec = model.pending.first(where: { $0.id == id }) {
-                    if rec.state == .processed {
+                    if rec.state == .processed, !model.isAnalysing(rec.id) {
                         ReviewView(rec: rec).id(rec.id)
                     } else {
                         ProcessingView(rec: rec).id(rec.id)

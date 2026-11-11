@@ -149,9 +149,7 @@ public func draftSummary(_ config: Config, meeting rel: String) async throws -> 
     let files = try meetings.read(rel)
     guard !files.transcript.trimmed.isEmpty else { throw OatcakeError("This meeting has no transcript to summarise.") }
     let notes = parseNotes(files.notes).map { Note(at: $0.stamp.map(seconds), text: $0.text) }
-    let name = (rel as NSString).lastPathComponent
-    let title = files.meta.title ?? name.replacingOccurrences(of: #"^\d{4}-\d{2}-\d{2} \d{4} "#, with: "", options: .regularExpression)
-    let (summary, todo) = try await summarise(config, title: title, participants: files.meta.participants ?? [config.myName],
+    let (summary, todo) = try await summarise(config, title: titleOfMeeting(rel, files.meta), participants: files.meta.participants ?? [config.myName],
                                               notes: notes, transcript: files.transcript)
     return SummaryDraft(summary: summary, todo: todo)
 }
@@ -181,42 +179,137 @@ private func notesMarkdown(_ notes: [Note]) -> String {
     notes.map { n in n.at.map { "- [\(clock($0))] \(n.text)" } ?? "- \(n.text)" }.joined(separator: "\n") + "\n"
 }
 
-private let todoMarker = "=== TO-DOS ==="
+/// Room kept for the model's reasoning and its reply.
+let replyTokens = 8_192
 
-/// Writes summary.md's body and todo.md's to-dos in one model call.
+private let notesSystem = "You write meeting notes from a call's transcript. Use only what the transcript and the note-taker's own notes say. Name who said or decided what."
+
+/// What the model is told when it writes a summary, after it has been given the transcript. It can
+/// be changed in Settings › Summaries, which is why it says everything about the summary's shape.
+public let defaultSummaryInstructions = """
+    Write the summary of this meeting in Markdown.
+    - Cover every topic that was discussed, each under its own '## ' heading, in the order it came up.
+    - Under each heading, two to five short bullet points: what was said, decided or left open, and by whom. Decisions, numbers and dates matter most.
+    - Do not list action items; they are collected separately.
+    - Start your reply with the first '## ' heading and write nothing before or after the summary.
+    """
+
+private let todosTask = """
+    List the action items people agreed to in this meeting: things someone said they will do. One item per commitment; leave out things that were only talked about.
+    For each: task (what to do, starting with a verb, with enough detail to make sense on its own), owner (the person's name as written in the transcript), due (the date or day as it was said in the call, or null if none was said), at (the [mm:ss] time of the line where it was agreed).
+    Reply as JSON: {"todos": [{"task": ..., "owner": ..., "due": ..., "at": ...}]}. If nothing was agreed, reply {"todos": []}.
+    """
+
+/// For a call done in parts: said before the summary's own instructions.
+private let mergeTask = """
+    Join these notes into one summary of the whole meeting. A topic that was returned to later is written up once, and every decision, number and date is kept, with who it belongs to.
+    """
+
+/// The shape the to-dos come back in. The model's server holds the reply to it.
+let todosSchema = #"{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"owner":{"type":["string","null"]},"due":{"type":["string","null"]},"at":{"type":["string","null"]}},"required":["task","owner","due","at"]}}},"required":["todos"]}"#
+
+/**
+ * Writes summary.md's body and todo.md's to-dos. The summary and the to-dos are asked for one after
+ * the other, each a plain task with the transcript in front of it: a small model follows that far
+ * better than one long set of instructions, and the second question costs little because the model
+ * has just read the same transcript. A call too long for the model to take in at once on this Mac
+ * is done in parts, and the parts' notes are joined.
+ */
 private func summarise(_ config: Config, title: String, participants: [String], notes: [Note], transcript: String) async throws -> (String, String) {
     // The notes stay the note-taker's own (notes.md). Here they only tell the model what mattered.
     let notesBlock = notes.isEmpty ? "" : ([
         "\(config.myName) took these notes ([mm:ss] = time into the call; \"before the call\" = prep written",
         "beforehand). They are kept separately, so don't copy them into the summary. Treat them as a signal",
         "of what mattered most to the note-taker: cover those topics fully, with the details from the",
-        "transcript around each timestamp, and keep everything else brief.",
+        "transcript around each timestamp.",
     ] + notes.map { "[\($0.at.map(clock) ?? "before the call")] \($0.text)" }).joined(separator: "\n")
+    let head = ["Meeting: \(title)", "Participants: \(participants.joined(separator: ", "))", config.jargonLine, notesBlock]
+        .filter { !$0.isEmpty }.joined(separator: "\n")
+    let system = ChatMessage("system", notesSystem)
+    let summaryTask = config.summaryTask
+    let reasoning = config.llm.reasoning
+    let overhead = LocalModels.tokens(in: head + summaryTask + todosTask) + replyTokens + 200
+    let parts = splitTranscript(transcript, tokens: max(2_000, largestContext(config.llm) - overhead))
 
-    let reply = try await makeLlm(config.llm).complete(
-        system: "You write concise, accurate meeting notes in Markdown. Use only facts from the transcript and notes. "
-            + "Name who said or decided what. Follow the reply format exactly.",
-        prompt: [
-            "Meeting: \(title)",
-            "Participants: \(participants.joined(separator: ", "))",
-            config.jargonLine,
-            "",
-            notesBlock,
-            "",
-            "Reply in two parts.",
-            "1. The summary: organised by topic under your own '##' headings, starting at the first '##'.",
-            "   Leave action items out of it; they go in part 2. You may cite a moment as [mm:ss].",
-            "2. A line reading exactly \(todoMarker), then one line per action item agreed in the call:",
-            "   - [ ] What to do — Owner — due <date, only if one was stated, e.g. Fri, Oct 30> — [mm:ss]",
-            "   Owner is the person's name as in the transcript; leave out any part that isn't known, and",
-            "   [mm:ss] is when it was agreed. If nothing was agreed, write nothing after the marker.",
-            "",
-            "Transcript:",
-            transcript,
-        ].joined(separator: "\n"))
-    let parts = reply.components(separatedBy: todoMarker)
-    let todos = (parts.count > 1 ? parts[1] : "").components(separatedBy: "\n")
-        .filter { $0.range(of: #"^\s*[-*]\s+\[( |x|X)\]\s+\S"#, options: .regularExpression) != nil }
-        .map(\.trimmed)
-    return (parts[0].trimmed + "\n", todos.isEmpty ? "" : todos.joined(separator: "\n") + "\n")
+    var summaries: [String] = []
+    var todos: [String] = []
+    for (i, part) in parts.enumerated() {
+        let which = parts.count > 1 ? ", part \(i + 1) of \(parts.count)" : ""
+        let prompt = "\(head)\n\nTranscript ([mm:ss] is the time into the call)\(which):\n\(part)\n\n"
+        let (summary, items) = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + overhead) { model, _ in
+            (summaryBody(try await model.complete([system, ChatMessage("user", prompt + summaryTask)], think: reasoning.summary, maxTokens: replyTokens)),
+             todoLines(try await model.complete([system, ChatMessage("user", prompt + todosTask)], schema: todosSchema, think: reasoning.todos, maxTokens: replyTokens)))
+        }
+        summaries.append(summary)
+        todos += items
+    }
+    var summary = summaries.first ?? ""
+    if summaries.count > 1 {
+        let joined = summaries.enumerated().map { "Notes on part \($0 + 1) of \(summaries.count):\n\($1)" }.joined(separator: "\n\n")
+        let prompt = "\(head)\n\nThe meeting was long, so notes were written on each part of it in turn. Here they are, in order.\n\n\(joined)\n\n\(mergeTask)\n\(summaryTask)"
+        summary = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + replyTokens) { model, _ in
+            summaryBody(try await model.complete([system, ChatMessage("user", prompt)], think: reasoning.summary, maxTokens: replyTokens))
+        }
+    }
+    var seen = Set<String>()
+    let unique = todos.filter { seen.insert($0.lowercased()).inserted }
+    return (summary.trimmed + "\n", unique.isEmpty ? "" : unique.joined(separator: "\n") + "\n")
+}
+
+/// A transcript in pieces of at most `tokens` tokens each, cut between speakers' turns. One piece
+/// when it's short enough, as nearly every call is.
+func splitTranscript(_ transcript: String, tokens: Int) -> [String] {
+    var parts: [String] = []
+    var current: [String] = []
+    var size = 0
+    for paragraph in transcript.components(separatedBy: "\n\n") where !paragraph.trimmed.isEmpty {
+        let cost = LocalModels.tokens(in: paragraph) + 1
+        if size + cost > tokens, !current.isEmpty {
+            parts.append(current.joined(separator: "\n\n"))
+            current = []
+            size = 0
+        }
+        current.append(paragraph)
+        size += cost
+    }
+    if !current.isEmpty { parts.append(current.joined(separator: "\n\n")) }
+    return parts.isEmpty ? [transcript] : parts
+}
+
+/// The summary without anything the model put before its first heading, or a code fence around it.
+func summaryBody(_ reply: String) -> String {
+    var text = reply.trimmed
+    if text.hasPrefix("```") { text = text.replacingOccurrences(of: #"^```[a-zA-Z]*\n|\n```\s*$"#, with: "", options: .regularExpression) }
+    if let heading = text.range(of: #"(?m)^## "#, options: .regularExpression) { text = String(text[heading.lowerBound...]) }
+    return text.trimmed
+}
+
+/// todo.md lines from the model's JSON: "- [ ] Task — Owner — due Fri, Oct 30 — [12:34]", with the
+/// parts it didn't know left out.
+func todoLines(_ reply: String) -> [String] {
+    struct Reply: Decodable {
+        struct Item: Decodable {
+            var task: String?
+            var owner: String?
+            var due: String?
+            var at: String?
+        }
+        var todos: [Item]
+    }
+    guard let parsed = try? parseJsonObject(Reply.self, reply) else { return [] }
+    /// A small model sometimes writes the word instead of leaving the value empty.
+    func known(_ value: String?) -> String? {
+        guard let v = value?.trimmed, !v.isEmpty, !["null", "none", "n/a", "unknown", "not stated", "not specified", "tbd"].contains(v.lowercased()) else { return nil }
+        return v.replacingOccurrences(of: " — ", with: ", ")
+    }
+    return parsed.todos.compactMap { item in
+        guard let task = known(item.task) else { return nil }
+        var line = "- [ ] \(task.prefix(1).uppercased() + task.dropFirst())"
+        if let owner = known(item.owner) { line += " — \(owner)" }
+        if let due = known(item.due) { line += " — due \(due)" }
+        if let at = known(item.at)?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")), at.range(of: #"^\d{1,2}:\d\d(:\d\d)?$"#, options: .regularExpression) != nil {
+            line += " — [\(at)]"
+        }
+        return line
+    }
 }

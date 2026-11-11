@@ -1,43 +1,163 @@
-// The model that writes summaries and suggests names: Claude through Claude Code or the Anthropic
-// API, or a model on your own Mac or network. It only ever sees text.
+// Talking to the language model. It's always a model on this Mac (see LocalModel.swift) or on a
+// server of your own on your network; both speak the same chat API. It only ever sees text.
 
 import Foundation
 
-/// Anything that can answer one prompt. To add a model, add a provider and a case in makeLlm.
-public protocol Llm: Sendable {
-    var label: String { get }
-    func complete(system: String, prompt: String) async throws -> String
-}
+/// What a local model's address gets when it isn't local (settings from a version that allowed any address).
+public let notLocalMessage = "A model server of your own has to be on this Mac or your own network, and this address isn’t. Change it in Settings › Summaries, or choose one of Oatcake’s own models there."
 
-public func makeLlm(_ config: LlmConfig) -> Llm {
-    switch config.provider {
-    case .claudeCode: ClaudeCodeLlm(model: config.claudeCode.model, effort: config.claudeCode.effort)
-    case .anthropic: AnthropicLlm(model: config.anthropic.model, effort: config.anthropic.effort, key: Secrets.get(.anthropic))
-    case .local: LocalLlm(baseUrl: config.local.baseUrl, model: config.local.model, effort: config.local.effort)
+/// One turn of a conversation with the model.
+public struct ChatMessage: Sendable, Equatable {
+    public var role: String
+    public var content: String
+    public init(_ role: String, _ content: String) {
+        self.role = role
+        self.content = content
     }
 }
 
 /**
- * A model failure in plain words, with what to do about it. The raw message (a command's exit text,
- * an API's reply) is shown behind "Details" by the windows; an error that's already plain comes back
- * unchanged.
+ * A chat server at a local address. Requests follow Qwen's own advice for its models: its sampling
+ * settings for each mode, never greedy decoding, room for a long reply, and nothing of its
+ * reasoning kept in the conversation. Whether it reasons before it replies is the caller's to say:
+ * Settings › Summaries has a switch for each task (LlmConfig.Reasoning).
+ */
+public struct LocalChat: Sendable {
+    public var baseUrl: String
+    public var model: String
+    /// The key Oatcake made up for its own server. None is sent to a server of yours.
+    var key: String?
+    /// Oatcake's own server runs Qwen3, which takes its reasoning switch from the chat template.
+    var qwen = false
+
+    public init(baseUrl: String, model: String) {
+        self.baseUrl = baseUrl
+        self.model = model
+    }
+
+    init(baseUrl: String, model: String, key: String?, qwen: Bool) {
+        self.baseUrl = baseUrl
+        self.model = model
+        self.key = key
+        self.qwen = qwen
+    }
+
+    public var label: String { "\(model) at \(baseUrl)" }
+
+    private func request(_ path: String, timeout: TimeInterval) throws -> URLRequest {
+        guard !baseUrl.trimmed.isEmpty, !model.trimmed.isEmpty else { throw OatcakeError("Set the endpoint and model in Settings first.") }
+        guard isLocalEndpoint(baseUrl) else { throw OatcakeError(notLocalMessage) }
+        guard let url = URL(string: baseUrl.trimmed.replacingOccurrences(of: #"/$"#, with: "", options: .regularExpression) + path) else {
+            throw OatcakeError("The endpoint isn’t a valid address.")
+        }
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
+        return request
+    }
+
+    /// Whether Oatcake's own server has finished loading its model: llama.cpp's /health says so.
+    func isReady() async -> Bool {
+        let root = baseUrl.trimmed.replacingOccurrences(of: #"/v1/?$"#, with: "", options: .regularExpression)
+        guard let url = URL(string: root + "/health") else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 2)
+        request.httpMethod = "GET"
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    /**
+     * The model's reply to a conversation. `schema` is a JSON Schema the reply must fit (the server
+     * holds the model to it). `maxTokens` is room for the reasoning and the reply together.
+     */
+    public func complete(_ messages: [ChatMessage], schema: String? = nil, think: Bool = true, maxTokens: Int = 8_192) async throws -> String {
+        var request = try request("/chat/completions", timeout: 3600)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        var body: [String: Any] = [
+            "model": model,
+            "messages": messages.map { ["role": $0.role, "content": $0.content] },
+            "max_tokens": maxTokens,
+            // Qwen3's recommended sampling: thinking and non-thinking modes each have their own.
+            "temperature": think ? 0.6 : 0.7,
+            "top_p": think ? 0.95 : 0.8,
+            "top_k": 20,
+            "min_p": 0,
+            "presence_penalty": 1.5,
+            // The server keeps its reading of a prompt, so a second question about the same call starts at once.
+            "cache_prompt": true,
+        ]
+        if qwen { body["chat_template_kwargs"] = ["enable_thinking": think] }
+        if let schema, let object = try? JSONSerialization.jsonObject(with: Data(schema.utf8)) {
+            body["response_format"] = ["type": "json_schema", "json_schema": ["name": "reply", "strict": true, "schema": object]]
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw OatcakeError("The model at \(baseUrl) returned \(status): \(String(decoding: data, as: UTF8.self).prefix(300))")
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let choice = (json?["choices"] as? [[String: Any]])?.first
+        let reply = withoutReasoning(((choice?["message"] as? [String: Any])?["content"] as? String) ?? "")
+        guard !reply.isEmpty else {
+            // Its reasoning used up the room before it got to the reply.
+            throw OatcakeError(choice?["finish_reason"] as? String == "length" ? outOfRoomMessage : "The model gave an empty reply.")
+        }
+        return reply
+    }
+}
+
+let outOfRoomMessage = "The model ran out of room before it finished its reply. Trying again usually works."
+
+/// A reply without the model's reasoning, for servers that leave it in the text between <think> tags.
+func withoutReasoning(_ reply: String) -> String {
+    reply.replacingOccurrences(of: #"(?s)^\s*<think>.*?</think>"#, with: "", options: .regularExpression).trimmed
+}
+
+/**
+ * Runs `work` with the model that's set in Settings, with room for a prompt of `tokens` tokens and
+ * its reply. For one of Oatcake's own models this starts its server if it isn't running, with the
+ * smallest window that fits (never more than this Mac has memory for), and keeps it as it is until
+ * `work` is done. `work` is also told how many tokens the window holds.
+ */
+public func withModel<T: Sendable>(_ config: LlmConfig, tokens: Int, _ work: (LocalChat, Int) async throws -> T) async throws -> T {
+    guard let model = LocalModels.find(config.model) else {
+        // A server of your own decides its window; Qwen's native one is assumed.
+        return try await work(LocalChat(baseUrl: config.own.baseUrl, model: config.own.model), LocalModels.nativeContext)
+    }
+    let context = min(LocalModels.context(forTokens: tokens), LocalModels.maxContext(model))
+    let chat = try await ModelServer.shared.lease(model, context: context)
+    do {
+        let result = try await work(chat, context)
+        await ModelServer.shared.release()
+        return result
+    } catch {
+        await ModelServer.shared.release()
+        throw error
+    }
+}
+
+/// The most tokens the chosen model can be given at once on this Mac.
+public func largestContext(_ config: LlmConfig) -> Int {
+    LocalModels.find(config.model).map { LocalModels.maxContext($0) } ?? LocalModels.nativeContext
+}
+
+/**
+ * A model failure in plain words, with what to do about it. The raw message is shown behind
+ * "Details" by the windows; an error that's already plain comes back unchanged.
  */
 public func explainModelError(_ raw: String) -> String {
-    // Already in plain words (and it mentions a network, which isn't a sign of a lost connection here).
-    if raw == notLocalMessage { return raw }
+    if raw == notLocalMessage || raw == modelNotDownloadedMessage || raw == outOfRoomMessage { return raw }
     let e = raw.lowercased()
-    if e.contains("unrecognized_model") || e.contains("model_not_found") || (e.contains("model") && (e.contains("not found") || e.contains("does not exist") || e.contains("not exist"))) {
+    if e.contains("context") && (e.contains("exceed") || e.contains("too long") || e.contains("too large")) {
+        return "This call is too long for the model to take in at once on this Mac."
+    }
+    if e.contains("model") && (e.contains("not found") || e.contains("does not exist") || e.contains("not exist")) {
         let model = firstMatch(try! NSRegularExpression(pattern: #""model"\s*:\s*"([^"]+)""#), raw)?[1]
-        return "The model\(model.map { " “\($0)”" } ?? "") isn’t available to this sign-in. Choose another model in Settings › Summaries, then try again."
+        return "The model\(model.map { " “\($0)”" } ?? "") isn’t on that server. Check its name in Settings › Summaries."
     }
-    if e.contains("usage limit") || e.contains("rate limit") || e.contains("rate_limit") || e.contains("429") || e.contains("quota") || e.contains("overloaded") {
-        return "The model is at its usage limit or too busy right now. Try again later, or choose another model in Settings › Summaries."
-    }
-    if e.contains("/login") || e.contains("not logged in") || e.contains("not signed in") || e.contains("invalid api key") || e.contains("authentication") || e.contains("unauthorized") || e.contains(" 401") {
-        return "The sign-in or API key wasn’t accepted. For Claude Code, run claude in Terminal and type /login; for an API key, check it in Settings › Summaries."
-    }
-    if e.contains("could not connect") || e.contains("couldn’t connect") || e.contains("offline") || e.contains("timed out") || e.contains("network") || e.contains("hostname") || e.contains("connection") {
-        return "The model couldn’t be reached. Check your internet connection, or that your local model server is running."
+    if e.contains("could not connect") || e.contains("couldn’t connect") || e.contains("offline") || e.contains("timed out") || e.contains("hostname") || e.contains("connection") {
+        return "The model couldn’t be reached. If it’s a server of your own, check that it’s running."
     }
     return raw
 }
@@ -50,147 +170,6 @@ public func parseJsonObject<T: Decodable>(_ type: T.Type, _ text: String) throws
     return try JSONDecoder().decode(T.self, from: Data(text[start...end].utf8))
 }
 
-/**
- * Runs `claude -p`, reusing the user's Claude Code login. No tools, no MCP, no saved session, and no
- * user or project settings, so personal CLAUDE.md rules don't leak into replies.
- */
-struct ClaudeCodeLlm: Llm {
-    let model: String
-    let effort: Effort
-    var label: String { "Claude Code\(model.isEmpty ? "" : " (\(model))")" }
-
-    func complete(system: String, prompt: String) async throws -> String {
-        var args = ["-p", "--output-format", "text", "--system-prompt", system, "--tools", "",
-                    "--strict-mcp-config", "--no-session-persistence", "--setting-sources", ""]
-        if !model.isEmpty { args += ["--model", model] }
-        args += ["--effort", effort.rawValue]
-        let result = try await ChildProcess.run(try claudeExecutable(), args, input: prompt, directory: FileManager.default.temporaryDirectory)
-        guard result.status == 0 else {
-            throw OatcakeError("claude exited \(result.status): \(result.stderr.trimmed.isEmpty ? result.stdout.trimmed : result.stderr.trimmed)")
-        }
-        return result.stdout.trimmed
-    }
-}
-
-func claudeExecutable() throws -> URL {
-    guard let url = ShellEnvironment.which("claude") else {
-        throw OatcakeError("This needs Claude Code installed and signed in (the claude command).")
-    }
-    return url
-}
-
-/**
- * Claude through the Anthropic API, streamed. Server-side refusal fallbacks are on, so a declined
- * request is retried on a fallback model inside the same call.
- */
-struct AnthropicLlm: Llm {
-    let model: String
-    let effort: Effort
-    let key: String
-    var label: String { "\(model) via Anthropic API" }
-
-    func complete(system: String, prompt: String) async throws -> String {
-        guard !key.isEmpty else { throw OatcakeError("Add an Anthropic API key in Settings first.") }
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!, timeoutInterval: 600)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(key, forHTTPHeaderField: "x-api-key")
-        request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
-        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": model,
-            "max_tokens": 64000,
-            "stream": true,
-            "fallbacks": "default",
-            "output_config": ["effort": effort.rawValue],
-            "system": system,
-            "messages": [["role": "user", "content": prompt]],
-        ] as [String: Any])
-
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else {
-            var body = ""
-            for try await line in bytes.lines { body += line }
-            throw OatcakeError("The Anthropic API returned \(status): \(apiErrorMessage(body))")
-        }
-        var text = ""
-        var stopReason: String?
-        var explanation: String?
-        for try await line in bytes.lines {
-            guard line.hasPrefix("data:"), let data = String(line.dropFirst(5)).trimmed.data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            switch event["type"] as? String {
-            case "content_block_delta":
-                if let delta = event["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let piece = delta["text"] as? String {
-                    text += piece
-                }
-            case "message_delta":
-                let delta = event["delta"] as? [String: Any] ?? [:]
-                if let reason = delta["stop_reason"] as? String { stopReason = reason }
-                if let details = delta["stop_details"] as? [String: Any], let text = details["explanation"] as? String { explanation = text }
-            case "error":
-                let error = event["error"] as? [String: Any] ?? [:]
-                throw OatcakeError("The Anthropic API stopped: \(error["message"] as? String ?? "unknown error")")
-            default:
-                break
-            }
-        }
-        if stopReason == "refusal" { throw OatcakeError("Claude declined: \(explanation ?? "no explanation")") }
-        return text.trimmed
-    }
-}
-
-private func apiErrorMessage(_ body: String) -> String {
-    if let data = body.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-       let message = (json["error"] as? [String: Any])?["message"] as? String {
-        return message
-    }
-    return String(body.prefix(300))
-}
-
-/// A model server on this Mac or your own network, such as Ollama or LM Studio, through the chat
-/// completions API they share. No key is sent, and an address that isn't local is refused.
-struct LocalLlm: Llm {
-    let baseUrl: String
-    let model: String
-    let effort: Effort
-    var label: String { "\(model) via \(baseUrl)" }
-
-    func complete(system: String, prompt: String) async throws -> String {
-        guard !baseUrl.trimmed.isEmpty, !model.trimmed.isEmpty else { throw OatcakeError("Set the endpoint and model in Settings first.") }
-        guard isLocalEndpoint(baseUrl) else { throw OatcakeError(notLocalMessage) }
-        guard let url = URL(string: baseUrl.trimmed.replacingOccurrences(of: #"/$"#, with: "", options: .regularExpression) + "/chat/completions") else {
-            throw OatcakeError("The endpoint isn't a valid address.")
-        }
-        func send(withEffort: Bool) async throws -> (Data, Int) {
-            var request = URLRequest(url: url, timeoutInterval: 600)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "content-type")
-            var body: [String: Any] = [
-                "model": model,
-                "messages": [["role": "system", "content": system], ["role": "user", "content": prompt]],
-            ]
-            if withEffort { body["reasoning_effort"] = effort.rawValue }
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
-        }
-        // Servers and models without reasoning reject the effort setting; ask again without it.
-        var (data, status) = try await send(withEffort: true)
-        if status == 400 { (data, status) = try await send(withEffort: false) }
-        guard (200..<300).contains(status) else {
-            throw OatcakeError("\(baseUrl) returned \(status): \(String(decoding: data, as: UTF8.self).prefix(300))")
-        }
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let choices = json?["choices"] as? [[String: Any]]
-        return ((choices?.first?["message"] as? [String: Any])?["content"] as? String) ?? ""
-    }
-}
-
-/// What a local model's address gets when it isn't local (settings from a version that allowed any address).
-public let notLocalMessage = "A local model has to be on this Mac or your own network, and this address isn’t. Change it in Settings › Summaries, or choose Claude there."
-
 /// A child process with its input written and its output collected, without blocking a thread.
 public enum ChildProcess {
     public struct Result: Sendable {
@@ -199,16 +178,14 @@ public enum ChildProcess {
         public var stderr: String
     }
 
-    public static func run(_ executable: URL, _ arguments: [String], input: String? = nil, directory: URL? = nil, keepApiKeys: Bool = false,
+    public static func run(_ executable: URL, _ arguments: [String], input: String? = nil, directory: URL? = nil,
                            onStart: ((Process) -> Void)? = nil, onLine: (@Sendable (String) -> Void)? = nil) async throws -> Result {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        var environment = ShellEnvironment.childEnvironment(keepApiKeys: keepApiKeys)
+        var environment = ShellEnvironment.childEnvironment()
         if let directory {
             process.currentDirectoryURL = directory
-            // Claude Code takes its working folder (which Ask's file tools are confined to) from PWD,
-            // not only from the process's actual directory.
             environment["PWD"] = directory.path
         }
         process.environment = environment
