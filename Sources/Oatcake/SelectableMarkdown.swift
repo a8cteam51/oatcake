@@ -71,6 +71,22 @@ private final class AnswerTextView: NSTextView {
 
     override func cancelOperation(_ sender: Any?) { onEscape() }
 
+    /// What's copied or dragged out keeps its bold, italics and lists, and leaves behind what only
+    /// means something here: links to meetings and to times in a transcript, which would paste as
+    /// links to nowhere, and this window's text colour (white, when it's copied from a dark window).
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let storage = textStorage, selectedRange().length > 0 else { return super.writeSelection(to: pboard, types: types) }
+        let copy = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: selectedRange()))
+        let whole = NSRange(location: 0, length: copy.length)
+        copy.removeAttribute(.foregroundColor, range: whole)
+        copy.enumerateAttribute(.link, in: whole) { value, range, _ in
+            let url = value as? URL ?? (value as? String).flatMap(URL.init(string:))
+            if !["http", "https"].contains(url?.scheme?.lowercased() ?? "") { copy.removeAttribute(.link, range: range) }
+        }
+        pboard.clearContents()
+        return pboard.writeObjects([copy])
+    }
+
     /// One answer's selection goes when you click into another's (or anywhere else).
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()

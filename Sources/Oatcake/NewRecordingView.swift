@@ -69,8 +69,10 @@ struct NewRecordingView: View {
             await refreshDevices()
         }
         .task(id: candidateKey) { await loadPrevious() }
-        // A point typed but not entered is kept too, unless it has just gone into the call's notes.
-        .onDisappear { if !starting { addPrep(prepDraft) } }
+        // A point typed but not entered is kept too. Not once the call is being recorded, from here
+        // or from a reminder: its prep notes have gone into the call, and saving them again would
+        // bring them back for the next time.
+        .onDisappear { if !starting && (event == nil || model.live?.eventId != event?.id) { addPrep(prepDraft) } }
     }
 
     /**
