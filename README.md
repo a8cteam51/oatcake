@@ -103,7 +103,9 @@ them all to the Trash.
    switches in Settings › General.
 
    While a call is being recorded the **menu bar** shows its running time, with Stop in its
-   menu. A recording started from a calendar event keeps the event's **Join the call** button on
+   menu. (The menu bar item is drawn by a third helper, `Oatcake --menu-bar`, a menu-bar-only
+   app: macOS doesn't show a Dock app's menu bar menu while another app is in full screen.)
+   A recording started from a calendar event keeps the event's **Join the call** button on
    its screen, for when you press record before joining.
 2. **Process (on this Mac, in the background).** Parakeet transcribes both tracks. The call
    audio is split into voices by FluidAudio's batch diariser (pyannote segmentation, WeSpeaker
@@ -542,7 +544,8 @@ alike.
 - `Sources/OatcakeRecorder/` — system-audio + mic recorder (helper app)
 - `Sources/OatcakeCore/` — recordings, speech pipeline, voiceprints, the language model and its
   download, summaries, meeting folders, calendar, Granola and Quill imports, Ask, updates
-- `Sources/Oatcake/` — the app (SwiftUI); `--analyse` runs the analysis helper
+- `Sources/Oatcake/` — the app (SwiftUI); `--analyse` runs the analysis helper, `--live` the live
+  transcript's and `--menu-bar` the menu bar item's
 - `Tests/OatcakeCoreTests/` — tests, including the calendar against ical.js's output
 - `Scripts/` — bundling, versioning, signing `latest.json`
 
