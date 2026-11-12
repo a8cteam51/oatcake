@@ -115,6 +115,8 @@ final class AppModel {
     /// The folder whose Share sheet is open.
     var sharingFolder: String?
     private var sharingTask: Task<Void, Never>?
+    /// Whether a key for the Space is saved: asked of the Keychain once, not on every change in the Meetings folder.
+    private var sharingKeySaved = !Secrets.get(.spacefast).isEmpty
     private var sharingAgain = false
     /// How far each language model's download has got (0 to 1) while one is under way, and why the
     /// last one stopped, by model.
@@ -455,7 +457,10 @@ final class AppModel {
     func setSecret(_ name: SecretName, _ value: String) {
         let before = Secrets.get(name)
         attempt { try Secrets.set(name, value) }
-        if name == .spacefast { syncSharingSoon(always: true) }
+        if name == .spacefast {
+            sharingKeySaved = !Secrets.get(.spacefast).isEmpty
+            syncSharingSoon(always: true)
+        }
         if name == .calendar, Secrets.get(.calendar) != before { calendarChanged() }
     }
 
@@ -813,7 +818,7 @@ final class AppModel {
     // MARK: - Sharing
 
     /// Sharing has a Space and a key to publish to it with.
-    var sharingSetUp: Bool { !sharing.space.trimmed.isEmpty && !Secrets.get(.spacefast).isEmpty }
+    var sharingSetUp: Bool { !sharing.space.trimmed.isEmpty && sharingKeySaved }
 
     /// Changes what's synced or shared, saves it, and brings the Space into line.
     func changeSharing(_ change: (inout SharingState) -> Void) {
@@ -834,7 +839,9 @@ final class AppModel {
             changeSharing { if $0.folders[path] == nil { $0.folders[path] = FolderSharing() } }
             return
         }
-        let readers = sharing.folders[path]?.readers.count ?? 0
+        // The folder and any inside it with settings of their own: all of it stops.
+        let stopping = sharing.folders.filter { $0.key == path || $0.key.hasPrefix(path + "/") }
+        let readers = Set(stopping.values.flatMap { $0.readers.map(\.email) }).count
         if readers > 0 {
             let alert = NSAlert()
             alert.messageText = "Stop syncing “\(baseName(path))”?"
@@ -843,7 +850,7 @@ final class AppModel {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        changeSharing { $0.folders[path] = nil }
+        changeSharing { state in for folder in stopping.keys { state.folders[folder] = nil } }
     }
 
     /// Settings › Sharing › Check: whether the key reaches the Space, and who else can read all of it.
