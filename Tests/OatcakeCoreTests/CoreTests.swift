@@ -1136,7 +1136,7 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
 
         let kickoff = text("clients/acme-corp/2026-11-12-1000-kickoff/index.html")
         #expect(kickoff.contains("<h1>Kickoff &lt;b&gt;call&lt;/b&gt;</h1>") && kickoff.contains("Sam Taylor, Pat Lee"))
-        #expect(kickoff.contains("<li class=\"open\">Send the plan<span>Sam Taylor · due Friday</span></li><li class=\"done\">Book the room<span>Pat Lee</span></li>"))
+        #expect(kickoff.contains("<li class=\"open\"><b>Send the plan</b><span>Sam Taylor · due Friday</span></li><li class=\"done\"><b>Book the room</b><span>Pat Lee</span></li>"))
         #expect(kickoff.contains("Pat wants &lt;i&gt;three&lt;/i&gt; phases.") && !kickoff.contains("<i>"))
         // This folder shares transcripts; the one beside it, under the same parent, doesn't.
         #expect(kickoff.contains("<h2>Transcript</h2>") && kickoff.contains("I will send the plan by Friday."))
@@ -1164,8 +1164,11 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
             switch (request.method, request.path) {
             case ("GET", "/v1/spaces/notes"): return data(["id": "spc_1", "slug": "notes", "title": "Notes", "liveUrl": "https://notes.example/"])
             case ("GET", "/v1/spaces/notes/people"):
-                return data([["id": "per_1", "email": "old@example.com", "status": "accepted", "grants": [["scope": "/team/", "role": "viewer", "revokedAt": NSNull()]]],
-                             ["id": "per_2", "email": "pat@example.com", "status": "pending", "grants": [["scope": "/clients/", "role": "viewer", "revokedAt": NSNull()], ["scope": "/gone/", "role": "viewer", "revokedAt": NSNull()]]]])
+                // The shape Spacefast answers in: the people, and the team that owns the Space.
+                return data(["people": [["id": "per_1", "email": "old@example.com", "status": "accepted", "grants": [["scope": "/team/", "role": "viewer", "revokedAt": NSNull()]]],
+                                        ["id": "per_2", "email": "pat@example.com", "status": "pending", "grants": [["scope": "/clients/", "role": "viewer", "revokedAt": NSNull()], ["scope": "/gone/", "role": "viewer", "revokedAt": NSNull()], ["scope": "/was/", "role": "viewer", "revokedAt": "2026-11-01T00:00:00Z"]]],
+                                        ["id": "per_3", "email": "left@example.com", "status": "revoked", "grants": []]],
+                             "inheritedTeamAccess": ["teamName": "Sam", "members": [["userId": "u1"], ["userId": "u2"]]]])
             case ("GET", "/v1/spaces/notes/share-links"): return data([["id": "lnk_1", "active": true, "revokedAt": NSNull()], ["id": "lnk_0", "active": false, "revokedAt": "2026-11-01T00:00:00Z"]])
             default: return data([String: Any]())
             }
@@ -1185,7 +1188,9 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
         let report = try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor")
         #expect(report == SharingReport(pages: 5, invited: ["lee@example.com"], removed: 1, forgotten: ["Gone"]))
         #expect(state.folders["Gone"] == nil)
-        let calls = server.requests.map { "\($0.method) \($0.path)" }
+        // Everyone in the team that owns the Space can read all of it, so the window can say how many that is.
+        #expect(try await spacefast.access().team == Spacefast.OwningTeam(name: "Sam", members: 2))
+        let calls = server.requests.dropLast().map { "\($0.method) \($0.path)" }
         #expect(calls == [
             "GET /v1/spaces/notes/people", "GET /v1/spaces/notes/share-links",
             // Taken away first: the link, the person with nothing left, the folder Pat no longer has.

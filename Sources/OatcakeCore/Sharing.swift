@@ -222,7 +222,7 @@ private func meetingBody(_ files: MeetingFiles, started: Date?, transcript: Bool
     if !todos.isEmpty {
         out += "<h2>To-dos</h2><ul class=\"todos\">" + todos.map { todo in
             let detail = [todo.owner, todo.due.isEmpty ? "" : "due \(todo.due)"].filter { !$0.isEmpty }.joined(separator: " · ")
-            return "<li class=\"\(todo.done ? "done" : "open")\">\(escapeHTML(todo.text))" + (detail.isEmpty ? "" : "<span>\(escapeHTML(detail))</span>") + "</li>"
+            return "<li class=\"\(todo.done ? "done" : "open")\"><b>\(escapeHTML(todo.text))</b>" + (detail.isEmpty ? "" : "<span>\(escapeHTML(detail))</span>") + "</li>"
         }.joined() + "</ul>"
     }
     let summary = forReading(files.summary).trimmed
@@ -245,7 +245,7 @@ private let shareStyle = """
     .list li a{font-weight:600;text-decoration:none}.list li span{float:right;font-size:14px}.list li p{margin:4px 0 0;color:var(--soft);font-size:15px}
     .list .folder a::before{content:"▸ "}
     .todos{list-style:none;padding:0}.todos li{padding:4px 0 4px 26px;position:relative}.todos li::before{content:"○";position:absolute;left:4px;color:var(--soft)}
-    .todos .done{color:var(--soft);text-decoration:line-through}.todos .done::before{content:"●"}.todos span{display:block;font-size:14px;text-decoration:none}
+    .todos b{font-weight:400}.todos .done b{color:var(--soft);text-decoration:line-through}.todos .done::before{content:"●"}.todos span{display:block;font-size:14px}
     blockquote{margin:12px 0;padding-left:14px;border-left:3px solid var(--line);color:var(--soft)}
     pre{overflow:auto;padding:12px;border:1px solid var(--line);border-radius:6px;font-size:14px}code{font-family:ui-monospace,Menlo,monospace;font-size:.92em}
     table{border-collapse:collapse;margin:12px 0}th,td{border:1px solid var(--line);padding:5px 10px;text-align:left}

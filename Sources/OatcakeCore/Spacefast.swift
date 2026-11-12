@@ -62,10 +62,26 @@ public struct Spacefast: Sendable {
                          address: data["liveUrl"] as? String ?? "")
     }
 
-    /// Everyone given access to the Space by name, with the addresses they can read now.
-    public func people() async throws -> [SharePerson] {
-        let list = try await call("GET", spacePath + "/people") as? [[String: Any]] ?? []
-        return list.compactMap { person in
+    /// The team that owns the Space. Everyone in it can read all of the Space, whatever is set here.
+    public struct OwningTeam: Equatable, Sendable {
+        public var name: String
+        public var members: Int
+    }
+
+    /// Everyone given access to the Space by name, with the addresses they can read now, and the team that owns it.
+    public func access() async throws -> (people: [SharePerson], team: OwningTeam?) {
+        let data = try await call("GET", spacePath + "/people")
+        // {"people": […], "inheritedTeamAccess": {"teamName", "members": […]}}
+        let list = (data as? [String: Any])?["people"] as? [[String: Any]] ?? data as? [[String: Any]] ?? []
+        let inherited = (data as? [String: Any])?["inheritedTeamAccess"] as? [String: Any]
+        let team = inherited.map { OwningTeam(name: $0["teamName"] as? String ?? "", members: ($0["members"] as? [Any])?.count ?? 0) }
+        return (people(from: list), team)
+    }
+
+    public func people() async throws -> [SharePerson] { try await access().people }
+
+    private func people(from list: [[String: Any]]) -> [SharePerson] {
+        list.compactMap { person in
             guard let id = person["id"] as? String, person["status"] as? String != "revoked" else { return nil }
             let grants = person["grants"] as? [[String: Any]] ?? []
             let scopes = grants.filter { $0["revokedAt"] == nil || $0["revokedAt"] is NSNull }.compactMap { $0["scope"] as? String }
