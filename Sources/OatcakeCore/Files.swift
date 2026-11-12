@@ -10,6 +10,7 @@ public enum Paths {
     public static let voiceprints = data.appendingPathComponent("voiceprints.json")
     public static let config = data.appendingPathComponent("config.json")
     public static let calendar = data.appendingPathComponent("calendar.json")
+    public static let prep = data.appendingPathComponent("prep.json")
     public static let updateLog = data.appendingPathComponent("update.log")
 }
 

@@ -71,7 +71,9 @@ them all to the Trash.
    new one for a recurring event); leave
    the title blank to use the folder's name. The screen shows the event's attendees, the
    open to-dos from the last meeting in that folder (ticking one updates its `todo.md`),
-   and takes prep notes, which open the call's notes. Your microphone is recorded as you;
+   and takes prep notes, which open the call's notes: type them one at a time or paste a
+   list, which becomes a note per line. They're kept for that call until it's recorded, so
+   you can write them ahead and come back. Your microphone is recorded as you;
    everything the Mac plays (Zoom, Meet, Slack, anything) is recorded as the other people.
    During the call, write one point per line: each is stamped with the time you started
    typing it, and every line stays editable. The recorder is a small helper app
@@ -137,7 +139,7 @@ them all to the Trash.
    transcript. **To-dos** at the top of the sidebar gathers every meeting's to-dos (open
    and overdue counts beside it): Open / Done / All, grouped by due date, folder or owner,
    filtered by owner ("Mine" is your name from Settings). Ticking one there updates that
-   meeting's `todo.md`. Add a to-do under a meeting's Summary and it goes in that meeting's
+   meeting's `todo.md`, and under Open it leaves the list (it's under Done if you didn't mean it). Add a to-do under a meeting's Summary and it goes in that meeting's
    `todo.md`; add one on the To-dos page and it goes in the Meetings folder's own `todo.md`,
    owned by you unless you name someone. Type owner and due date after dashes:
    `Send the deck - Alex - due Fri, Nov 6`. The middle column's width drags, like the
@@ -152,6 +154,7 @@ them all to the Trash.
    looks at the earlier meetings in the same folder, and adds their summaries, to-dos and the
    transcript lines that match. The model never opens a file or runs anything itself. Answers
    link to the meetings they draw on, and a time in an answer opens the transcript at that moment.
+   An answer is one piece of text: select any stretch of it, or all of it, and copy.
    Web links in an answer are shown as text, not made clickable. Follow-ups continue the same conversation,
    which stays open as you move between meetings, until New chat. The first question about a call
    takes longest, while the model reads it; follow-ups about the same call are quicker.
@@ -403,8 +406,10 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   measured better (decisions given to the right person, fewer invented names, answers that keep
   to the question), and off for to-dos, which lost detail with it. The summary and the to-dos are
   two requests about the same transcript, each with its task after the transcript; the to-dos,
-  the name suggestions and Ask's first step come back as JSON the server holds to a schema. The
-  summary's instructions are yours to change (Settings › Summaries).
+  the name suggestions and Ask's first step come back as JSON the server holds to a schema, sent
+  as it's written: the model fills in the fields in the schema's order, and a to-do's task has to
+  come before its time (time first, it makes a to-do of every few minutes of the call). The
+  summary's instructions are yours to change, and so is what counts as a to-do (Settings › Summaries).
 - **How much it reads at once.** As little as the job needs, up to what this Mac's memory allows
   (the 8B takes about 5 GB plus 0.14 GB for every thousand tokens; an hour's call is around
   12,000). Qwen3 reads 32,768 tokens natively; a longer call stretches that with YaRN, by no more
@@ -450,6 +455,11 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   read the transcript. Change the headings, the level of detail or the language to suit you;
   **Restore Default** brings Oatcake's own back. To-dos are collected separately and aren't
   affected.
+- **To-do instructions** (Settings › Summaries): what the model is told counts as a to-do.
+  Oatcake's own keep it to what somebody said they'd do after the call, and leave out what was
+  only discussed, what was asked and not taken on, what was done during the call, and small
+  talk. Make it stricter or looser, or keep it to your own action items; **Restore Default**
+  brings Oatcake's own back. The shape of each to-do (task, owner, due date, time) isn't part of it.
 - **Reasoning** (Settings › Summaries): whether the model thinks a task through before it
   replies, with a switch each for summaries, to-dos, name suggestions and Ask. On is slower and
   not always better; it starts on for everything except to-dos. The switches are for Oatcake's

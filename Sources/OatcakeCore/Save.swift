@@ -194,8 +194,18 @@ public let defaultSummaryInstructions = """
     - Start your reply with the first '## ' heading and write nothing before or after the summary.
     """
 
-private let todosTask = """
-    List the action items people agreed to in this meeting: things someone said they will do. One item per commitment; leave out things that were only talked about.
+/// What the model is told counts as a to-do. It can be changed in Settings › Summaries too. Measured
+/// against other wordings on made-up calls and real ones: this one left out the most that wasn't
+/// agreed without losing what a task was about (a stricter one that also ruled out decisions did).
+public let defaultTodoInstructions = """
+    List the action items people agreed to in this meeting: the things someone said they will do after the call. One item for each piece of work.
+    - Leave out what was only talked about or suggested, and anything a person was asked to do and didn't take on.
+    - Leave out what was done during the call itself, and small talk or personal plans.
+    - If you're not sure someone took a thing on, leave it out.
+    """
+
+/// The shape of a to-do, which the app reads back: not for changing in Settings.
+let todosFormat = """
     For each: task (what to do, starting with a verb, with enough detail to make sense on its own), owner (the person's name as written in the transcript), due (the date or day as it was said in the call, or null if none was said), at (the [mm:ss] time of the line where it was agreed).
     Reply as JSON: {"todos": [{"task": ..., "owner": ..., "due": ..., "at": ...}]}. If nothing was agreed, reply {"todos": []}.
     """
@@ -227,6 +237,7 @@ private func summarise(_ config: Config, title: String, participants: [String], 
         .filter { !$0.isEmpty }.joined(separator: "\n")
     let system = ChatMessage("system", notesSystem)
     let summaryTask = config.summaryTask
+    let todosTask = config.todosTask
     let reasoning = config.llm.reasoning
     let overhead = LocalModels.tokens(in: head + summaryTask + todosTask) + replyTokens + 200
     let parts = splitTranscript(transcript, tokens: max(2_000, largestContext(config.llm) - overhead))

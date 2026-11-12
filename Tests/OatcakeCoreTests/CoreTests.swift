@@ -475,6 +475,12 @@ private func fixture(_ name: String) throws -> URL {
         config.summaryInstructions = "  Three bullet points, in French.\n"
         #expect(config.summaryTask == "Three bullet points, in French.")
         #expect(try JSONDecoder().decode(Config.self, from: Data(encodeJSON(config).utf8)).summaryInstructions == config.summaryInstructions)
+        // The same for what counts as a to-do. The shape they come back in isn't yours to change.
+        #expect(config.todosTask == defaultTodoInstructions + "\n" + todosFormat)
+        config.todoInstructions = "  Only my own action items.\n"
+        #expect(config.todosTask == "Only my own action items.\n" + todosFormat)
+        #expect(try JSONDecoder().decode(Config.self, from: Data(encodeJSON(config).utf8)).todoInstructions == config.todoInstructions)
+        #expect(try JSONDecoder().decode(Config.self, from: Data(#"{"myName":"Sam"}"#.utf8)).todoInstructions == "")
     }
 
     @Test func localModelsOnly() async throws {
@@ -703,6 +709,8 @@ private struct TestMeetings {
         #expect(thinking["presence_penalty"] as? Double == 1.5 && thinking["min_p"] as? Int == 0 && thinking["cache_prompt"] as? Bool == true)
         #expect((thinking["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
         #expect(((thinking["response_format"] as? [String: Any])?["json_schema"] as? [String: Any])?["schema"] != nil)
+        // The schema arrives as it's written, its fields in their order: the model fills them in that order.
+        #expect(String(decoding: sent[0].body, as: UTF8.self).contains("\"schema\":" + todosSchema))
         #expect(thinking["max_tokens"] as? Int == 8_192 && sent[0].messages.system == "Be brief.")
         #expect(plain["temperature"] as? Double == 0.7 && plain["top_p"] as? Double == 0.8 && plain["max_tokens"] as? Int == 20)
         #expect((plain["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false && plain["response_format"] == nil)
@@ -742,6 +750,7 @@ private struct TestMeetings {
         config.outputDir = meetings.root.path
         config.jargon = ["WooCommerce"]
         config.summaryInstructions = "Write three bullet points, in French."
+        config.todoInstructions = "List only what Sam Taylor agreed to do."
 
         let draft = try await draftSummary(config, meeting: rel)
         #expect(draft.summary == "## Deck\n- Alex Kim will send the deck on Friday.\n")
@@ -750,6 +759,7 @@ private struct TestMeetings {
         #expect(sent.count == 2 && sent[0].system == sent[1].system)
         #expect(sent[0].user.hasSuffix("Write three bullet points, in French.") && !sent[0].user.contains("Cover every topic"))
         #expect(sent[1].user.contains(#"{"todos": ["#) && server.requests[0].json["response_format"] == nil)
+        #expect(sent[1].user.contains("\n\nList only what Sam Taylor agreed to do.\nFor each: task") && !sent[1].user.contains("small talk"))
         let shared = try #require(sent[0].user.range(of: "I will send the deck on Friday.\n\n")).upperBound
         #expect(sent[1].user.hasPrefix(sent[0].user[..<shared]))
         #expect(sent[0].user.hasPrefix("Meeting: Weekly sync\nParticipants: Sam Taylor, Alex Kim\n") && sent[0].user.contains("WooCommerce") && sent[0].user.contains("[00:03] Deck timing"))
@@ -758,11 +768,41 @@ private struct TestMeetings {
 
         // Oatcake's own instructions when there are none of yours.
         config.summaryInstructions = ""
+        config.todoInstructions = ""
         config.llm.reasoning.summary = false
         config.llm.reasoning.todos = true
         _ = try await draftSummary(config, meeting: rel)
         #expect(server.requests[2].messages.user.hasSuffix(defaultSummaryInstructions))
+        #expect(server.requests[3].messages.user.hasSuffix(defaultTodoInstructions + "\n" + todosFormat))
         #expect(server.requests[2...].map { $0.json["temperature"] as? Double } == [0.7, 0.6])
+    }
+
+    @Test func prepNotes() throws {
+        // A pasted agenda comes in as its points, without what they were listed with.
+        #expect(prepLines("Pricing\n\n- Renewal terms\n  * Who signs?\n3. Timeline\n4) Budget\n• Risks\n- [ ] Send the deck\n[x] Done already\n   \n") ==
+            ["Pricing", "Renewal terms", "Who signs?", "Timeline", "Budget", "Risks", "Send the deck", "Done already"])
+        // What only looks like a list marker is part of the point.
+        #expect(prepLines("-5% on renewal\r\n2026 plan\n3.5x growth") == ["-5% on renewal", "2026 plan", "3.5x growth"])
+        #expect(prepLines(" \n") == [])
+
+        // Kept per calendar event (or for a call that isn't from the calendar) until it's recorded.
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("oatcake-prep-\(UUID().uuidString)/prep.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        #expect(PrepNotes.load("a@2026-11-12T10:00:00.000Z", from: file) == [])
+        let then = Date(timeIntervalSince1970: 1_800_000_000)
+        try PrepNotes.save("a@2026-11-12T10:00:00.000Z", [" Pricing ", "", "Who signs?"], to: file, now: then)
+        try PrepNotes.save(nil, ["Ask about the rota"], to: file, now: then.addingTimeInterval(86_400))
+        #expect(PrepNotes.load("a@2026-11-12T10:00:00.000Z", from: file) == ["Pricing", "Who signs?"])
+        #expect(PrepNotes.load(nil, from: file) == ["Ask about the rota"])
+        #expect(PrepNotes.load("b@2026-11-12T10:00:00.000Z", from: file) == [])
+        // Prep for a call that was never recorded goes after a month, when something else is saved.
+        try PrepNotes.save("b@2026-11-12T10:00:00.000Z", ["Budget"], to: file, now: then.addingTimeInterval(30.5 * 86_400))
+        #expect(PrepNotes.load("a@2026-11-12T10:00:00.000Z", from: file) == [])
+        #expect(PrepNotes.load(nil, from: file) == ["Ask about the rota"])
+        // Saving none forgets it, and the file goes with the last of them.
+        try PrepNotes.save(nil, [], to: file, now: then.addingTimeInterval(31 * 86_400))
+        try PrepNotes.save("b@2026-11-12T10:00:00.000Z", [], to: file, now: then.addingTimeInterval(31 * 86_400))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
     @Test func summaryPieces() {

@@ -561,9 +561,10 @@ final class AppModel {
         selection = live != nil ? .live : .new(event)
     }
 
-    /// A recording started straight from a calendar event carries the event and who else is invited.
+    /// A recording started straight from a calendar event carries the event, any prep notes written
+    /// for it on New recording, and who else is invited.
     private func startOptions(_ event: CalendarEvent) -> Recordings.StartOptions {
-        .init(eventId: event.id, attendees: otherAttendees(event, myName: config.myName).map(attendeeName))
+        .init(eventId: event.id, prep: PrepNotes.load(event.id), attendees: otherAttendees(event, myName: config.myName).map(attendeeName))
     }
 
     /// The link to the call being recorded, when it was started from a calendar event that has one.
@@ -577,6 +578,8 @@ final class AppModel {
         guard active.isEmpty else { throw OatcakeError("Oatcake is already recording a call. Stop it first.") }
         let rec = try Recordings.start(title: title, folder: folder, micUid: config.mic?.uid, options: options)
         active[rec.id] = rec
+        // The prep is in the call's notes now.
+        if !options.prep.isEmpty { try? PrepNotes.save(options.eventId, []) }
         goLive(rec)
     }
 

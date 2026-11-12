@@ -108,7 +108,8 @@ struct AskBar: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(turn.question).fontWeight(.semibold)
             if let answer = turn.answer {
-                MarkdownView(markdown: answerMarkdown(answer), fontSize: 13)
+                // One piece of text, so the whole answer (or any stretch of it) can be selected and copied.
+                SelectableMarkdown(markdown: answerMarkdown(answer), fontSize: 13) { model.ask.open = false }
             } else if let error = turn.error {
                 ModelError(raw: error).foregroundStyle(.red).textSelection(.enabled)
             } else if turn.stopped {
