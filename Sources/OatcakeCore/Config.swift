@@ -261,6 +261,7 @@ public enum ShellEnvironment {
     public static func childEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "OATCAKE_CALENDAR_URL")
+        env.removeValue(forKey: "OATCAKE_SPACEFAST_KEY")
         return env
     }
 }

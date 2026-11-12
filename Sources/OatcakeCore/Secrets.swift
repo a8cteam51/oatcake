@@ -8,11 +8,14 @@ import Security
 
 public enum SecretName: String, CaseIterable, Sendable {
     case calendar
+    /// The key Oatcake publishes shared folders to your Spacefast Space with.
+    case spacefast
 
     /// One already in the environment when Oatcake started (e.g. from your shell) is the fallback.
     var environmentVariable: String {
         switch self {
         case .calendar: "OATCAKE_CALENDAR_URL"
+        case .spacefast: "OATCAKE_SPACEFAST_KEY"
         }
     }
 }

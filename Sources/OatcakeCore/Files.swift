@@ -11,6 +11,7 @@ public enum Paths {
     public static let config = data.appendingPathComponent("config.json")
     public static let calendar = data.appendingPathComponent("calendar.json")
     public static let prep = data.appendingPathComponent("prep.json")
+    public static let sharing = data.appendingPathComponent("sharing.json")
     public static let updateLog = data.appendingPathComponent("update.log")
 }
 

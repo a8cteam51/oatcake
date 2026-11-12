@@ -530,8 +530,8 @@ private func fixture(_ name: String) throws -> URL {
         await #expect(throws: OatcakeError(notLocalMessage)) {
             _ = try await withModel(config, tokens: 100) { chat, _ in try await chat.complete([ChatMessage("user", "Hello")]) }
         }
-        // No key is kept for a model any more.
-        #expect(SecretName.allCases.map(\.rawValue) == ["calendar"])
+        // No key is kept for a model any more: only the calendar's address and, for sharing, the key to your own Space.
+        #expect(SecretName.allCases.map(\.rawValue) == ["calendar", "spacefast"])
     }
 
     /// Which model a Mac starts with, and how much it's given to read at once, go by its memory.
@@ -598,6 +598,7 @@ private func fixture(_ name: String) throws -> URL {
 /// for the site a model is downloaded from). It answers each request with what `handler` returns.
 final class StandIn: @unchecked Sendable {
     struct Request: Sendable {
+        var method = "GET"
         var path: String
         var headers: [String: String]
         var body: Data
@@ -702,7 +703,7 @@ final class StandIn: @unchecked Sendable {
         let body = data[end.upperBound...]
         guard body.count >= Int(headers["content-length"] ?? "0") ?? 0 else { return nil }
         let first = lines.first?.split(separator: " ") ?? []
-        return Request(path: first.count > 1 ? String(first[1]) : "", headers: headers, body: Data(body))
+        return Request(method: first.first.map(String.init) ?? "GET", path: first.count > 1 ? String(first[1]) : "", headers: headers, body: Data(body))
     }
 }
 
@@ -1009,6 +1010,222 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
     var copy = value
     change(&copy)
     return copy
+}
+
+@Suite struct SharingTests {
+    @Test func markdownBecomesHTML() {
+        let html = markdownHTML("""
+            ## Offsite
+            - **Alex** books the café <b>now</b>
+              - by *Friday*
+            - See [the plan](https://example.com/plan?a=1&b=2), not [this](javascript:alert(1)) or [that](Team/2026-11-09%20Weekly%20sync)
+
+            1. One
+            2. Two
+
+            > Quoted & kept
+
+            ```
+            <script>alert("x")</script>
+            ```
+
+            | Topic | Owner |
+            |---|---|
+            | Pricing | Sam |
+
+            ---
+            Last ~~word~~ `code`
+            """)
+        #expect(html.contains("<h3>Offsite</h3>"))
+        #expect(html.contains("<ul><li><strong>Alex</strong> books the café &lt;b&gt;now&lt;/b&gt;<ul><li>by <em>Friday</em></li></ul></li><li>See <a href=\"https://example.com/plan?a=1&amp;b=2\" rel=\"noopener noreferrer\">the plan</a>, not this or that</li></ul>"))
+        #expect(html.contains("<ol><li>One</li><li>Two</li></ol>"))
+        #expect(html.contains("<blockquote><p>Quoted &amp; kept</p></blockquote>"))
+        #expect(html.contains("<pre><code>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;</code></pre>"))
+        #expect(html.contains("<table><tr><th>Topic</th><th>Owner</th></tr><tr><td>Pricing</td><td>Sam</td></tr></table>"))
+        #expect(html.contains("<hr><p>Last <del>word</del> <code>code</code></p>"))
+        // Nothing from a call can become markup or a link to anything but the web.
+        #expect(!html.contains("<script") && !html.contains("<b>") && !html.contains("javascript:") && !html.contains("Weekly%20sync"))
+    }
+
+    @Test func addressesAndWhoCanRead() {
+        #expect(shareSlug("Acme Corp") == "acme-corp" && shareSlug("  Café / Zürich: 1:1 ") == "cafe-zurich-1-1" && shareSlug("***") == "folder")
+        #expect(sharePath("Clients/Acme Corp") == "clients/acme-corp" && shareScope("Clients/Acme Corp") == "/clients/acme-corp/")
+
+        var state = SharingState()
+        state.folders["Clients"] = FolderSharing(readers: [ShareReader(email: " Pat@Example.com ", name: "Pat")])
+        state.folders["Clients/Acme Corp"] = FolderSharing(transcript: true, readers: [ShareReader(email: "lee@example.com"), ShareReader(email: "pat@example.com")])
+        state.folders["Team"] = FolderSharing()
+        #expect(state.isSynced("Clients/Acme Corp/2026-11-12 1000 Kickoff") && state.isSynced("Team") && !state.isSynced("Private") && !state.isSynced("Clients2"))
+        #expect(state.syncedFolder(over: "Clients/Acme Corp/Sub") == "Clients/Acme Corp" && state.syncedFolder(over: "Clients/Other") == "Clients")
+        // A folder's readers are its own and those of every folder it's in.
+        #expect(state.readers(of: "Clients/Acme Corp").map(\.email) == ["pat@example.com", "lee@example.com"])
+        #expect(state.readers(of: "Clients/Other").map(\.email) == ["pat@example.com"] && state.readers(of: "Team").isEmpty)
+        // Moving something into a shared folder shows it to people who couldn't read it before.
+        #expect(state.readersGained(moving: "Team/2026-11-09 1000 Weekly sync", into: "Clients/Acme Corp").map(\.email) == ["pat@example.com", "lee@example.com"])
+        #expect(state.readersGained(moving: "Clients/Other", into: "Clients/Acme Corp").map(\.email) == ["lee@example.com"])
+        // One scope each where a folder they're named on is inside another of theirs.
+        #expect(wantedScopes(state) == ["pat@example.com": ["/clients/"], "lee@example.com": ["/clients/acme-corp/"]])
+
+        // Renamed or moved inside Oatcake: still synced, with its own choice about transcripts, and nobody carried over.
+        state.folderMoved(from: "Clients", to: "Customers")
+        #expect(state.folders["Clients"] == nil && state.folders["Clients/Acme Corp"] == nil)
+        #expect(state.folders["Customers"] == FolderSharing() && state.folders["Customers/Acme Corp"] == FolderSharing(transcript: true))
+        #expect(wantedScopes(state).isEmpty)
+        // "Clients2" was never part of "Clients".
+        state.folders["Clients2"] = FolderSharing(readers: [ShareReader(email: "kit@example.com")])
+        state.folderMoved(from: "Clients", to: "Elsewhere")
+        #expect(state.folders["Clients2"]?.readers.count == 1)
+
+        // Gone from the Meetings folder (renamed in Finder, say): no longer synced, and its readers with it.
+        let tree = TreeNode(name: "Meetings", path: "", kind: .folder, children: [
+            TreeNode(name: "Customers", path: "Customers", kind: .folder), TreeNode(name: "Team", path: "Team", kind: .folder),
+        ])
+        #expect(state.forgetMissing(in: tree) == ["Clients2", "Customers/Acme Corp"])
+        #expect(Set(state.folders.keys) == ["Customers", "Team"])
+        #expect(try! JSONDecoder().decode(SharingState.self, from: Data(encodeJSON(state).utf8)) == state)
+    }
+
+    @Test func accessIsTakenAwayBeforeAndGivenAfter() {
+        var state = SharingState()
+        state.folders["Clients"] = FolderSharing(readers: [ShareReader(email: "pat@example.com"), ShareReader(email: "new@example.com")])
+        state.folders["Team"] = FolderSharing(readers: [ShareReader(email: "pat@example.com"), ShareReader(email: "moved@example.com")])
+        let people = [
+            SharePerson(id: "p1", email: "Pat@example.com", scopes: ["/clients/", "/old/"]),     // keeps one, loses one, gains one
+            SharePerson(id: "p2", email: "gone@example.com", scopes: ["/clients/"]),             // no longer named anywhere
+            SharePerson(id: "p3", email: "moved@example.com", scopes: ["/elsewhere/"]),          // nothing they had is theirs now
+            SharePerson(id: "p4", email: "same@example.com", scopes: ["/team/"]),
+        ]
+        state.folders["Team"]?.readers.append(ShareReader(email: "same@example.com"))
+        let plan = sharingPlan(state, people: people, links: ["lnk_b", "lnk_a"])
+        #expect(plan.before.revokeLinks == ["lnk_a", "lnk_b"])
+        #expect(plan.before.remove == ["p2", "p3"])
+        #expect(plan.before.narrow == ["p1": ["/clients/"]])
+        #expect(plan.after.widen == ["p1": ["/clients/", "/team/"]])
+        #expect(plan.after.invite == ["new@example.com": ["/clients/"], "moved@example.com": ["/team/"]])
+        // Nothing synced: everyone goes and nobody is added.
+        let empty = sharingPlan(SharingState(), people: people, links: [])
+        #expect(empty.before.remove == ["p1", "p2", "p3", "p4"] && empty.after == SharingPlan.After())
+    }
+
+    private func sample() throws -> (TestMeetings, Meetings) {
+        let made = TestMeetings()
+        let meta = #"{"title":"Kickoff <b>call</b>","startedAt":"2026-11-12T10:00:00.000Z","endedAt":"2026-11-12T10:30:00.000Z","participants":["Sam Taylor","Pat Lee"]}"#
+        try made.write("Clients/Acme Corp/2026-11-12 1000 Kickoff", .summary, "## Scope\n- Pat wants <i>three</i> phases.\n", meta: meta)
+        try made.write("Clients/Acme Corp/2026-11-12 1000 Kickoff", .todo, "- [ ] Send the plan — Sam Taylor — due Friday — [00:40]\n- [x] Book the room — Pat Lee\n")
+        try made.write("Clients/Acme Corp/2026-11-12 1000 Kickoff", .transcript, "**[00:40] Sam Taylor:** I will send the plan by Friday.\n")
+        try made.write("Clients/Acme Corp/2026-11-12 1000 Kickoff", .notes, "- [00:41] SECRET-NOTE about the budget\n")
+        try made.write("Clients/Birch/2026-11-10 0900 Review", .summary, "## Birch only\n- BIRCH-DETAIL\n")
+        try made.write("Team/2026-11-09 1000 Weekly sync", .summary, "## Team only\n- TEAM-DETAIL\n")
+        try made.write("Private/2026-11-08 1000 One to one", .summary, "## Private\n- PRIVATE-DETAIL\n")
+        return (made, Meetings(root: made.root))
+    }
+
+    @Test func pagesForSyncedFoldersOnly() throws {
+        let (made, meetings) = try sample()
+        defer { made.remove() }
+        var state = SharingState()
+        state.folders["Clients"] = FolderSharing()
+        state.folders["Clients/Acme Corp"] = FolderSharing(transcript: true)
+        let files = try sharedSite(state, meetings: meetings, tree: meetings.tree(), owner: "Sam Taylor")
+        #expect(files.map(\.path) == ["clients/acme-corp/2026-11-12-1000-kickoff/index.html", "clients/acme-corp/index.html",
+                                      "clients/birch/2026-11-10-0900-review/index.html", "clients/birch/index.html", "clients/index.html", "index.html"])
+        func text(_ path: String) -> String { String(decoding: files.first { $0.path == path }?.data ?? Data(), as: UTF8.self) }
+        let everything = files.map { String(decoding: $0.data, as: UTF8.self) }.joined()
+        // Folders that aren't synced, and your own notes, are in none of it.
+        #expect(!everything.contains("TEAM-DETAIL") && !everything.contains("PRIVATE-DETAIL") && !everything.contains("SECRET-NOTE") && !everything.contains("Weekly sync"))
+
+        let kickoff = text("clients/acme-corp/2026-11-12-1000-kickoff/index.html")
+        #expect(kickoff.contains("<h1>Kickoff &lt;b&gt;call&lt;/b&gt;</h1>") && kickoff.contains("Sam Taylor, Pat Lee"))
+        #expect(kickoff.contains("<li class=\"open\">Send the plan<span>Sam Taylor · due Friday</span></li><li class=\"done\">Book the room<span>Pat Lee</span></li>"))
+        #expect(kickoff.contains("Pat wants &lt;i&gt;three&lt;/i&gt; phases.") && !kickoff.contains("<i>"))
+        // This folder shares transcripts; the one beside it, under the same parent, doesn't.
+        #expect(kickoff.contains("<h2>Transcript</h2>") && kickoff.contains("I will send the plan by Friday."))
+        #expect(!text("clients/birch/2026-11-10-0900-review/index.html").contains("Transcript"))
+        // A folder's page lists what's in it and nothing beside it.
+        let acme = text("clients/acme-corp/index.html")
+        #expect(acme.contains("href=\"2026-11-12-1000-kickoff/\"") && !acme.contains("Birch") && !acme.contains("birch"))
+        #expect(text("clients/index.html").contains("href=\"acme-corp/\"") && text("clients/index.html").contains("href=\"birch/\""))
+        // The front page names nothing.
+        #expect(!text("index.html").contains("lients") && everything.contains("noindex"))
+
+        // Two folders that would share an address stop it, rather than one being shown to the other's readers.
+        try made.write("Clients/acme-corp/2026-11-01 0900 Other", .summary, "## Other\n")
+        #expect(throws: OatcakeError.self) { try sharedSite(state, meetings: meetings, tree: meetings.tree(), owner: "Sam Taylor") }
+    }
+
+    /// A stand-in for Spacefast: one person with access to a folder that's no longer shared with
+    /// them, and a link left by an earlier publish.
+    private func space(failing: String? = nil) async throws -> StandIn {
+        try await StandIn { request in
+            func data(_ value: Any) -> StandIn.Response { StandIn.Response(status: request.method == "POST" ? 201 : 200, body: try! JSONSerialization.data(withJSONObject: ["data": value])) }
+            if let failing, "\(request.method) \(request.path)".hasPrefix(failing) {
+                return StandIn.Response(status: 500, body: Data(#"{"code":"internal","message":"Something broke."}"#.utf8))
+            }
+            switch (request.method, request.path) {
+            case ("GET", "/v1/spaces/notes"): return data(["id": "spc_1", "slug": "notes", "title": "Notes", "liveUrl": "https://notes.example/"])
+            case ("GET", "/v1/spaces/notes/people"):
+                return data([["id": "per_1", "email": "old@example.com", "status": "accepted", "grants": [["scope": "/team/", "role": "viewer", "revokedAt": NSNull()]]],
+                             ["id": "per_2", "email": "pat@example.com", "status": "pending", "grants": [["scope": "/clients/", "role": "viewer", "revokedAt": NSNull()], ["scope": "/gone/", "role": "viewer", "revokedAt": NSNull()]]]])
+            case ("GET", "/v1/spaces/notes/share-links"): return data([["id": "lnk_1", "active": true, "revokedAt": NSNull()], ["id": "lnk_0", "active": false, "revokedAt": "2026-11-01T00:00:00Z"]])
+            default: return data([String: Any]())
+            }
+        }
+    }
+
+    @Test func syncInOrder() async throws {
+        let (made, meetings) = try sample()
+        defer { made.remove() }
+        var state = SharingState()
+        state.space = "notes"
+        state.folders["Clients"] = FolderSharing(readers: [ShareReader(email: "pat@example.com"), ShareReader(email: "lee@example.com")])
+        state.folders["Gone"] = FolderSharing(readers: [ShareReader(email: "kit@example.com")])
+        let server = try await space()
+        let spacefast = Spacefast(space: "notes", key: "sfa_made-up", base: URL(string: server.address)!)
+
+        let report = try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor")
+        #expect(report == SharingReport(pages: 5, invited: ["lee@example.com"], removed: 1, forgotten: ["Gone"]))
+        #expect(state.folders["Gone"] == nil)
+        let calls = server.requests.map { "\($0.method) \($0.path)" }
+        #expect(calls == [
+            "GET /v1/spaces/notes/people", "GET /v1/spaces/notes/share-links",
+            // Taken away first: the link, the person with nothing left, the folder Pat no longer has.
+            "DELETE /v1/spaces/notes/share-links/lnk_1", "DELETE /v1/spaces/notes/people/per_1", "PUT /v1/spaces/notes/people/per_2/roles",
+            "GET /v1/spaces/notes", "POST /v1/publish",
+            // Whatever link publishing left, then the new reader.
+            "GET /v1/spaces/notes/share-links", "DELETE /v1/spaces/notes/share-links/lnk_1",
+            "POST /v1/spaces/notes/people",
+        ])
+        #expect(server.requests.allSatisfy { $0.headers["authorization"] == "Bearer sfa_made-up" })
+        #expect((server.requests[4].json["grants"] as? [[String: String]]) == [["scope": "/clients/", "role": "viewer"]])
+        #expect(server.requests[9].json["email"] as? String == "lee@example.com" && (server.requests[9].json["grants"] as? [[String: String]]) == [["scope": "/clients/", "role": "viewer"]])
+        // The publish replaces everything on the Space with these pages.
+        let publish = String(decoding: server.requests[6].body, as: UTF8.self)
+        #expect(server.requests[6].headers["content-type"]?.hasPrefix("multipart/form-data; boundary=oatcake-") == true)
+        #expect(publish.contains("\"publishMode\":\"snapshot\"") && publish.contains("\"spaceId\":\"spc_1\""))
+        #expect(publish.contains("name=\"clients/acme-corp/2026-11-12-1000-kickoff/index.html\"") && publish.contains("name=\"index.html\""))
+        #expect(!publish.contains("TEAM-DETAIL") && !publish.contains("PRIVATE-DETAIL") && !publish.contains("SECRET-NOTE") && !publish.contains("I will send the plan by Friday."))
+    }
+
+    @Test func nothingIsPublishedIfAccessCannotBeTakenAway() async throws {
+        let (made, meetings) = try sample()
+        defer { made.remove() }
+        var state = SharingState()
+        state.space = "notes"
+        state.folders["Clients"] = FolderSharing(readers: [ShareReader(email: "lee@example.com")])
+        let server = try await space(failing: "DELETE /v1/spaces/notes/people/")
+        let spacefast = Spacefast(space: "notes", key: "sfa_made-up", base: URL(string: server.address)!)
+        await #expect(throws: OatcakeError.self) { try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor") }
+        let calls = server.requests.map { "\($0.method) \($0.path)" }
+        #expect(!calls.contains("POST /v1/publish") && !calls.contains("POST /v1/spaces/notes/people"))
+
+        // The key only ever goes to Spacefast over HTTPS, and a refused key is said plainly.
+        let plain = Spacefast(space: "notes", key: "sfa_made-up", base: URL(string: "http://spacefast.example")!)
+        await #expect(throws: OatcakeError("Spacefast is only reached over HTTPS.")) { _ = try await plain.info() }
+        let refusing = try await StandIn { _ in StandIn.Response(status: 401, body: Data(#"{"code":"unauthorized","message":"Bad token."}"#.utf8)) }
+        await #expect(throws: OatcakeError("Spacefast didn’t accept the key. Check it in Settings › Sharing.")) {
+            _ = try await Spacefast(space: "notes", key: "sfa_wrong", base: URL(string: refusing.address)!).info()
+        }
+    }
 }
 
 @Suite struct QuillTests {
