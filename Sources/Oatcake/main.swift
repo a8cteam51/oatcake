@@ -1,6 +1,7 @@
 // Oatcake.app's one executable: the app, or with --analyse <recording folder> the helper that
 // analyses one recording, or with --live <recording folder> the one that transcribes a call while
-// it's recorded. Both report as JSON lines on standard output.
+// it's recorded, or with --menu-bar the one that draws the menu bar item. All report as JSON lines
+// on standard output.
 
 import Foundation
 import OatcakeCore
@@ -39,6 +40,8 @@ if let flag = CommandLine.arguments.firstIndex(of: "--analyse"), flag + 1 < Comm
         }
     }
     dispatchMain()
+} else if CommandLine.arguments.contains(MenuBarLink.flag) {
+    MainActor.assumeIsolated { MenuBarHelper.run() }
 } else {
     OatcakeApp.main()
 }

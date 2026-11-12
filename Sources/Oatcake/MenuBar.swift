@@ -1,23 +1,136 @@
 // The menu bar item. While a call is being recorded it shows the running time, with Stop in its
 // menu. Otherwise, with a calendar connected (and Settings › Calendar's switch on), it shows the time
 // until your next call and lists what's coming up.
+//
+// It's drawn by a helper: Oatcake's own program run a second time (with --menu-bar) as a
+// menu-bar-only app. macOS doesn't draw a Dock app's menu bar menu over another app's full-screen
+// Space: the item highlights and nothing appears, however the menu is opened. A menu-bar-only
+// app's menu is drawn there. Oatcake tells the helper what to show, and the helper tells Oatcake
+// what was chosen (MenuBarLink).
 
 import AppKit
 import OatcakeCore
 
+/// Oatcake's side: starts the helper when there's something to show, and keeps it told.
 @MainActor
-final class MenuBarItem: NSObject, NSMenuDelegate {
-    enum Content {
-        /// `elapsed` is nil until audio arrives.
-        case recording(title: String, elapsed: Double?)
-        /// Timed events that haven't ended, soonest first.
-        case upcoming([CalendarEvent])
-    }
+final class MenuBarItem {
+    typealias Content = MenuBarContent
 
     var stop: () -> Void = {}
     var open: () -> Void = {}
     var record: () -> Void = {}
     var openEvent: (CalendarEvent) -> Void = { _ in }
+
+    private var helper: Process?
+    private var toHelper: FileHandle?
+    private var lastSent: Data?
+    private var lastStart = Date.distantPast
+
+    func show(_ content: Content) {
+        let line = MenuBarLink.line(content)
+        // Told only of a change: the helper keeps the time until the next call up to date itself.
+        if helper != nil, line == lastSent { return }
+        if helper == nil {
+            // A helper that keeps failing isn't started over and over.
+            guard Date().timeIntervalSince(lastStart) > 5 else { return }
+            start()
+        }
+        do {
+            try toHelper?.write(contentsOf: line)
+            lastSent = line
+        } catch {
+            // It has gone: the next change starts another.
+            stopHelper()
+        }
+    }
+
+    func hide() { stopHelper() }
+
+    private func start() {
+        lastStart = Date()
+        // Writing to a helper that has just died is an error to handle, not a reason to be stopped.
+        signal(SIGPIPE, SIG_IGN)
+        guard let program = Bundle.main.executableURL else { return }
+        let process = Process()
+        process.executableURL = program
+        process.arguments = [MenuBarLink.flag]
+        process.environment = ShellEnvironment.childEnvironment()
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        // One pipe's handler runs one call at a time, so the buffer needs no lock.
+        final class Lines: @unchecked Sendable { var buffer = LineBuffer() }
+        let lines = Lines()
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            for line in lines.buffer.add(handle.availableData) {
+                guard let action = MenuBarLink.read(MenuBarAction.self, line) else { continue }
+                Task { @MainActor in self?.chosen(action) }
+            }
+        }
+        process.terminationHandler = { [weak self] ended in
+            output.fileHandleForReading.readabilityHandler = nil
+            Task { @MainActor in
+                // Unless it was stopped on purpose and another has started since.
+                if self?.helper === ended { self?.stopHelper() }
+            }
+        }
+        do { try process.run() } catch { return }
+        helper = process
+        toHelper = input.fileHandleForWriting
+        lastSent = nil
+    }
+
+    private func stopHelper() {
+        // It leaves when its input closes; told to as well, in case it's busy.
+        try? toHelper?.close()
+        if helper?.isRunning == true { helper?.terminate() }
+        helper = nil
+        toHelper = nil
+        lastSent = nil
+    }
+
+    private func chosen(_ action: MenuBarAction) {
+        switch action {
+        case .stop: stop()
+        case .open: open()
+        case .record: record()
+        case .openEvent(let event): openEvent(event)
+        case .quit: NSApp.terminate(nil)
+        }
+    }
+}
+
+/// The helper: a menu-bar-only run of Oatcake's program that owns the menu bar item. It shows what
+/// it's told on its input, and writes what's chosen from the menu on its output. It leaves when its
+/// input closes, which is when Oatcake hides the item or quits.
+@MainActor
+enum MenuBarHelper {
+    static func run() -> Never {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let item = StatusItem()
+        item.send = { action in FileHandle.standardOutput.write(MenuBarLink.line(action)) }
+        Thread.detachNewThread {
+            while let line = readLine(strippingNewline: true) {
+                guard let content = MenuBarLink.read(MenuBarContent.self, line) else { continue }
+                DispatchQueue.main.async { MainActor.assumeIsolated { item.show(content) } }
+            }
+            exit(0)
+        }
+        // The time until the next call counts down without Oatcake having to say so.
+        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in MainActor.assumeIsolated { item.refresh() } }
+        app.run()
+        exit(0)
+    }
+}
+
+/// The item itself, in the helper.
+@MainActor
+final class StatusItem: NSObject, NSMenuDelegate {
+    typealias Content = MenuBarContent
+
+    var send: (MenuBarAction) -> Void = { _ in }
 
     private var item: NSStatusItem?
     private var content: Content?
@@ -62,11 +175,9 @@ final class MenuBarItem: NSObject, NSMenuDelegate {
         }
     }
 
-    func hide() {
-        if let item { NSStatusBar.system.removeStatusItem(item) }
-        item = nil
-        content = nil
-        symbol = ""
+    /// Shows the same again, for what depends on the time.
+    func refresh() {
+        if let content { show(content) }
     }
 
     /// Built when it opens, so it lists what's coming up now.
@@ -102,13 +213,23 @@ final class MenuBarItem: NSObject, NSMenuDelegate {
         add("Quit Oatcake", #selector(quit))
     }
 
-    @objc private func stopRecording() { stop() }
-    @objc private func openApp() { open() }
-    @objc private func newRecording() { record() }
+    @objc private func stopRecording() { send(.stop) }
+    @objc private func openApp() { bringOatcakeForward(); send(.open) }
+    @objc private func newRecording() { bringOatcakeForward(); send(.record) }
     @objc private func openListed(_ sender: NSMenuItem) {
-        if listed.indices.contains(sender.tag) { openEvent(listed[sender.tag]) }
+        guard listed.indices.contains(sender.tag) else { return }
+        bringOatcakeForward()
+        send(.openEvent(listed[sender.tag]))
     }
-    @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quit() { send(.quit) }
+
+    /// The click was on the helper's menu, so it's the helper macOS will let bring an app forward:
+    /// it passes that on to Oatcake, which then shows its window.
+    private func bringOatcakeForward() {
+        guard let oatcake = NSRunningApplication(processIdentifier: getppid()) else { return }
+        NSApp.yieldActivation(to: oatcake)
+        oatcake.activate(from: .current, options: [])
+    }
 }
 
 /// The oatcake from Oatcake's icon, for the menu bar: its outline filled, with the waveform cut out of
