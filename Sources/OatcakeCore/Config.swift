@@ -140,6 +140,8 @@ public struct Config: Codable, Equatable, Sendable {
     /// What the model is told when it writes a summary, when you've changed it. "" = Oatcake's own
     /// (defaultSummaryInstructions), so an improvement to those reaches everyone who hasn't.
     public var summaryInstructions: String
+    /// What the model is told counts as a to-do, when you've changed it. "" = Oatcake's own (defaultTodoInstructions).
+    public var todoInstructions: String
 
     public var meetingsRoot: URL { URL(fileURLWithPath: outputDir, isDirectory: true) }
 
@@ -161,7 +163,7 @@ public struct Config: Codable, Equatable, Sendable {
 
     init(myName: String, outputDir: String, asrModel: String, llm: LlmConfig, keepAudio: Bool, mic: MicChoice?, callReminders: Bool, updateCheck: Bool,
          callNotice: Bool = true, autoStop: Bool = true, liveTranscript: Bool = true, jargon: [String] = [], menuBarNextCall: Bool = true,
-         summaryInstructions: String = "") {
+         summaryInstructions: String = "", todoInstructions: String = "") {
         self.myName = myName
         self.outputDir = outputDir
         self.asrModel = asrModel
@@ -176,6 +178,7 @@ public struct Config: Codable, Equatable, Sendable {
         self.jargon = jargon
         self.menuBarNextCall = menuBarNextCall
         self.summaryInstructions = summaryInstructions
+        self.todoInstructions = todoInstructions
     }
 
     /// Missing or unreadable settings fall back to the defaults one by one.
@@ -196,6 +199,7 @@ public struct Config: Codable, Equatable, Sendable {
         jargon = (try? c.decodeIfPresent([String].self, forKey: .jargon)) ?? base.jargon
         menuBarNextCall = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarNextCall)) ?? base.menuBarNextCall
         summaryInstructions = (try? c.decodeIfPresent(String.self, forKey: .summaryInstructions)) ?? base.summaryInstructions
+        todoInstructions = (try? c.decodeIfPresent(String.self, forKey: .todoInstructions)) ?? base.todoInstructions
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -215,10 +219,11 @@ public struct Config: Codable, Equatable, Sendable {
         try c.encode(jargon, forKey: .jargon)
         try c.encode(menuBarNextCall, forKey: .menuBarNextCall)
         try c.encode(summaryInstructions, forKey: .summaryInstructions)
+        try c.encode(todoInstructions, forKey: .todoInstructions)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case myName, outputDir, asrModel, llm, keepAudio, mic, callReminders, updateCheck, callNotice, autoStop, liveTranscript, jargon, menuBarNextCall, summaryInstructions
+        case myName, outputDir, asrModel, llm, keepAudio, mic, callReminders, updateCheck, callNotice, autoStop, liveTranscript, jargon, menuBarNextCall, summaryInstructions, todoInstructions
     }
 
     /// For the model: how to spell the names and terms you've listed, or "" when there are none.
@@ -229,6 +234,10 @@ public struct Config: Codable, Equatable, Sendable {
 
     /// What the model is told when it writes a summary: yours, or Oatcake's own.
     public var summaryTask: String { summaryInstructions.trimmed.isEmpty ? defaultSummaryInstructions : summaryInstructions.trimmed }
+
+    /// What the model is told when it collects to-dos: which things count (yours, or Oatcake's own),
+    /// then the shape to give them in, which stays Oatcake's.
+    public var todosTask: String { (todoInstructions.trimmed.isEmpty ? defaultTodoInstructions : todoInstructions.trimmed) + "\n" + todosFormat }
 
     public static func load() -> Config {
         try? FileManager.default.createDirectory(at: Paths.data, withIntermediateDirectories: true)

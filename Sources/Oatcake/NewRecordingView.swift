@@ -69,6 +69,8 @@ struct NewRecordingView: View {
             await refreshDevices()
         }
         .task(id: candidateKey) { await loadPrevious() }
+        // A point typed but not entered is kept too, unless it has just gone into the call's notes.
+        .onDisappear { if !starting { addPrep(prepDraft) } }
     }
 
     /**
@@ -80,6 +82,7 @@ struct NewRecordingView: View {
     private func setUp() {
         ready = true
         title = event?.title ?? ""
+        prep = PrepNotes.load(event?.id)
         guard let event else {
             folder = model.folder.isEmpty ? topLevel : model.folder
             return
@@ -224,25 +227,42 @@ struct NewRecordingView: View {
             HStack {
                 SectionLabel(text: "Prep notes")
                 Spacer()
-                Text("Carried into the call’s notes").font(.caption).foregroundStyle(.secondary)
+                Text("Kept until the call, then carried into its notes").font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(Array(prep.enumerated()), id: \.offset) { _, p in
-                HStack(spacing: 10) {
+            ForEach(Array(prep.enumerated()), id: \.offset) { index, p in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Chip(text: "Prep", style: .prep)
-                    Text(p)
+                    Text(p).textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    Button { setPrep(prep.enumerated().filter { $0.offset != index }.map(\.element)) } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless).foregroundStyle(.tertiary)
+                    .help("Remove this prep note").accessibilityLabel("Remove “\(p)”")
                 }
             }
-            HStack(spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Chip(text: "Prep", style: .outline)
-                TextField("An agenda point or question, then Return", text: $prepDraft)
+                // Grows to take a pasted list, which then becomes a note per line.
+                TextField("An agenda point or question, then Return. Or paste a list.", text: $prepDraft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .onSubmit {
-                        guard !prepDraft.trimmed.isEmpty else { return }
-                        prep.append(prepDraft.trimmed)
-                        prepDraft = ""
-                    }
+                    .lineLimit(1...8)
+                    .onSubmit { addPrep(prepDraft) }
+                    .onChange(of: prepDraft) { if prepDraft.contains(where: \.isNewline) { addPrep(prepDraft) } }
             }
         }
+    }
+
+    /// Prep notes are saved as they change, so they're still here when you come back to this call.
+    private func setPrep(_ notes: [String]) {
+        prep = notes
+        do { try PrepNotes.save(event?.id, notes) } catch { model.toast(error.localizedDescription) }
+    }
+
+    private func addPrep(_ text: String) {
+        let lines = prepLines(text)
+        prepDraft = ""
+        if !lines.isEmpty { setPrep(prep + lines) }
     }
 
     private func start() {
@@ -260,7 +280,7 @@ struct NewRecordingView: View {
                     target = try Meetings(root: model.config.meetingsRoot).createFolder(in: "", named: newName)
                 }
             }
-            let notes = prepDraft.trimmed.isEmpty ? prep : prep + [prepDraft.trimmed]
+            let notes = prep + prepLines(prepDraft)
             let name = title.trimmed.isEmpty ? (folderName.isEmpty ? "Untitled meeting" : folderName) : title.trimmed
             try model.startRecording(title: name, folder: target,
                                      options: .init(eventId: event?.id, prep: notes, attendees: event.map { others($0).map(attendeeName) } ?? []))

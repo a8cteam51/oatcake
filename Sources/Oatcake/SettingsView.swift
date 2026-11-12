@@ -6,7 +6,6 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @ViewState private var devices: [InputDevice]?
     @ViewState private var jargon = ""
-    @ViewState private var instructions = ""
     @AppStorage("settingsPane") private var pane = "general"
 
     var body: some View {
@@ -15,7 +14,7 @@ struct SettingsView: View {
             Form { calendar }.formStyle(.grouped).tabItem { Label("Calendar", systemImage: "calendar") }.tag("calendar")
             Form { PeopleSection() }.formStyle(.grouped).tabItem { Label("People", systemImage: "person.2") }.tag("people")
             Form { transcription }.formStyle(.grouped).tabItem { Label("Transcription", systemImage: "waveform") }.tag("transcription")
-            Form { llmSection; reasoningSection; instructionsSection; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
+            Form { llmSection; reasoningSection; instructionsSections; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
             Form { storage }.formStyle(.grouped).tabItem { Label("Storage", systemImage: "folder") }.tag("storage")
             Form { UpdatesSection() }.formStyle(.grouped).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
         }
@@ -23,7 +22,6 @@ struct SettingsView: View {
         .task { devices = (try? await Recordings.listInputs()) ?? [] }
         .onAppear {
             jargon = model.config.jargon.joined(separator: ", ")
-            instructions = model.config.summaryTask
             // The Electron version's names for the two transcription choices read as the new ones.
             let key = SpeechModels.asrChoice(model.config.asrModel).key
             if key != model.config.asrModel { model.saveConfig(with(model.config) { $0.asrModel = key }) }
@@ -250,31 +248,55 @@ struct SettingsView: View {
         return isLocalEndpoint(llm.own.baseUrl) ? nil : "The endpoint has to be on this Mac or your own network."
     }
 
-    /// What the model is told when it writes a summary. Yours to change; Oatcake's own comes back with one button.
-    @ViewBuilder private var instructionsSection: some View {
+    /// What the model is told when it writes a summary and when it collects to-dos. Yours to change;
+    /// Oatcake's own comes back with one button.
+    @ViewBuilder private var instructionsSections: some View {
+        InstructionsSection(title: "Summary instructions", setting: \.summaryInstructions, standard: defaultSummaryInstructions,
+                            applies: "Used for summaries written from now on.",
+                            hint: "What the model is told to write once it has read the transcript. Change the headings, the level of detail or the language to suit you. To-dos are collected separately and aren’t affected.")
+        InstructionsSection(title: "To-do instructions", setting: \.todoInstructions, standard: defaultTodoInstructions,
+                            applies: "Used for to-dos collected from now on.",
+                            hint: "What the model is told counts as a to-do. Make it stricter or looser, or keep it to your own action items (“Only list what Sam agreed to do”). Each to-do still comes with its owner, due date and time in the call.")
+    }
+}
+
+/// One of the model's sets of instructions, to edit. Saved as it's typed.
+private struct InstructionsSection: View {
+    @Environment(AppModel.self) private var model
+    let title: String
+    let setting: WritableKeyPath<Config, String>
+    /// Oatcake's own wording.
+    let standard: String
+    let applies: String
+    let hint: String
+    @ViewState private var text = ""
+
+    var body: some View {
         Section {
-            TextEditor(text: $instructions)
+            TextEditor(text: $text)
                 .font(.system(.callout, design: .monospaced))
                 .frame(minHeight: 120)
                 .scrollContentBackground(.hidden)
-                .accessibilityLabel("Summary instructions")
-                .onChange(of: instructions) {
+                .accessibilityLabel(title)
+                .onChange(of: text) {
                     // Oatcake's own wording is kept as "none of your own", so a later improvement to it reaches you.
-                    let custom = instructions.trimmed == defaultSummaryInstructions.trimmed ? "" : instructions
-                    if custom != model.config.summaryInstructions { model.saveConfig(with(model.config) { $0.summaryInstructions = custom }) }
+                    let custom = text.trimmed == standard.trimmed ? "" : text
+                    if custom != model.config[keyPath: setting] { model.saveConfig(with(model.config) { $0[keyPath: setting] = custom }) }
                 }
             LabeledContent {
-                Button("Restore Default") { instructions = defaultSummaryInstructions }
-                    .disabled(instructions.trimmed == defaultSummaryInstructions.trimmed)
+                Button("Restore Default") { text = standard }.disabled(text.trimmed == standard.trimmed)
             } label: {
-                Text(model.config.summaryInstructions.trimmed.isEmpty ? "Oatcake’s own instructions" : "Your instructions")
-                Text("Used for summaries written from now on.")
+                Text(model.config[keyPath: setting].trimmed.isEmpty ? "Oatcake’s own instructions" : "Your instructions")
+                Text(applies)
             }
         } header: {
-            Text("Summary instructions")
+            Text(title)
         } footer: {
-            Text("What the model is told to write once it has read the transcript. Change the headings, the level of detail or the language to suit you. To-dos are collected separately and aren’t affected.")
-                .settingsHint()
+            Text(hint).settingsHint()
+        }
+        .onAppear {
+            let custom = model.config[keyPath: setting].trimmed
+            text = custom.isEmpty ? standard : custom
         }
     }
 }
@@ -285,8 +307,8 @@ func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
     return copy
 }
 
-private extension Text {
-    func settingsHint(_ color: Color = .secondary) -> some View {
+extension Text {
+    fileprivate func settingsHint(_ color: Color = .secondary) -> some View {
         font(.caption).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
             .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
     }

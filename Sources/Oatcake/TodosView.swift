@@ -11,8 +11,6 @@ struct TodosView: View {
     @ViewState private var grouping = Grouping.due
     @ViewState private var owner = "all"
     @ViewState private var adding = false
-    /// Ticked on this page: they stay (faded) in Open until you leave, so a mis-tick can be undone.
-    @ViewState private var touched = Set<String>()
     @ViewState private var draft = ""
     /// Ticks not yet read back from disk, so two quick ticks in one meeting don't undo each other.
     @ViewState private var local: [String: String] = [:]
@@ -30,7 +28,8 @@ struct TodosView: View {
         })
         let open = items.filter { !$0.todo.done }
         let overdue = items.filter { $0.isOverdue(today: today) }
-        var list = items.filter { status == .open ? !$0.todo.done || touched.contains($0.id) : status == .done ? $0.todo.done : true }
+        // One ticked in Open leaves the list at once. It's under Done, where a mis-tick can be undone.
+        var list = items.filter { status == .open ? !$0.todo.done : status == .done ? $0.todo.done : true }
         if owner == "mine" { list = list.filter { isMe($0.todo.owner, myName) } } else if owner != "all" { list = list.filter { $0.todo.owner == owner } }
         list.sort { a, b in
             let da = a.dueDate ?? .distantFuture, db = b.dueDate ?? .distantFuture
@@ -89,7 +88,7 @@ struct TodosView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Picker("Show", selection: Binding(get: { status }, set: { status = $0; touched = [] })) {
+                Picker("Show", selection: $status) {
                     Text("Open · \(open.count)").tag(Status.open)
                     Text("Done").tag(Status.done)
                     Text("All").tag(Status.all)
@@ -198,7 +197,6 @@ struct TodosView: View {
                 .frame(width: 90, alignment: .trailing)
         }
         .padding(.vertical, 7)
-        .opacity(item.todo.done && status == .open ? 0.55 : 1)
     }
 
     private func dueLabel(_ item: TodoItem, today: Date) -> String {
@@ -228,8 +226,7 @@ struct TodosView: View {
         do {
             let todo = toggleTodo(item.meeting.todo, line: item.todo.line)
             try model.writeMeetingFile(item.meeting.path, .todo, todo)
-            local[item.meeting.path] = todo
-            touched.insert(item.id)
+            withAnimation { local[item.meeting.path] = todo }
             model.toast("Saved to \(item.meeting.path.isEmpty ? "Meetings" : folderPath(item.meeting.path)) › todo.md")
         } catch {
             model.toast(error.localizedDescription)
