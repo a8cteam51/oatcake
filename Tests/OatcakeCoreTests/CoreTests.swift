@@ -1187,10 +1187,19 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
 
         let report = try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor")
         #expect(report == SharingReport(pages: 5, invited: ["lee@example.com"], removed: 1, forgotten: ["Gone"]))
-        #expect(state.folders["Gone"] == nil)
+        #expect(state.folders["Gone"] == nil && state.published != nil)
+        // The same again has nothing to do, and says nothing to Spacefast; a changed page or reader does.
+        let sent = server.requests.count
+        #expect(try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor").unchanged && server.requests.count == sent)
+        var changed = state
+        changed.folders["Clients"]?.readers.removeLast()
+        #expect(try await !syncSharing(&changed, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor").unchanged)
+        try made.write("Clients/Birch/2026-11-10 0900 Review", .summary, "## Birch only\n- Changed.\n")
+        var edited = state
+        #expect(try await !syncSharing(&edited, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor").unchanged)
         // Everyone in the team that owns the Space can read all of it, so the window can say how many that is.
         #expect(try await spacefast.access().team == Spacefast.OwningTeam(name: "Sam", members: 2))
-        let calls = server.requests.dropLast().map { "\($0.method) \($0.path)" }
+        let calls = server.requests.prefix(sent).map { "\($0.method) \($0.path)" }
         #expect(calls == [
             "GET /v1/spaces/notes/people", "GET /v1/spaces/notes/share-links",
             // Taken away first: the link, the person with nothing left, the folder Pat no longer has.
@@ -1222,6 +1231,16 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
         await #expect(throws: OatcakeError.self) { try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: "Sam Taylor") }
         let calls = server.requests.map { "\($0.method) \($0.path)" }
         #expect(!calls.contains("POST /v1/publish") && !calls.contains("POST /v1/spaces/notes/people"))
+        // A sync that didn't finish leaves nothing to say the Space is up to date.
+        #expect(state.published == nil)
+
+        // A Meetings folder that isn't there is not an empty one: nothing is forgotten, and nothing is sent.
+        let before = server.requests.count
+        var kept = state
+        await #expect(throws: OatcakeError("Your Meetings folder isn’t available, so nothing was synced.")) {
+            try await syncSharing(&kept, meetings: Meetings(root: made.root.appendingPathComponent("not-here")), spacefast: spacefast, owner: "Sam Taylor")
+        }
+        #expect(kept.folders == state.folders && server.requests.count == before)
 
         // The key only ever goes to Spacefast over HTTPS, and a refused key is said plainly.
         let plain = Spacefast(space: "notes", key: "sfa_made-up", base: URL(string: "http://spacefast.example")!)

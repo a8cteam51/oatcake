@@ -109,6 +109,13 @@ final class AppModel {
     /// Notes typed during each call, kept here so leaving the live view and coming back keeps them.
     var liveNotes: [String: [LiveLine]] = [:]
     var pendingEvent: CalendarEvent?
+    /// Which folders are kept on your Spacefast Space, and who each is shared with.
+    var sharing = SharingState.load()
+    var sharingBusy = false
+    /// The folder whose Share sheet is open.
+    var sharingFolder: String?
+    private var sharingTask: Task<Void, Never>?
+    private var sharingAgain = false
     /// How far each language model's download has got (0 to 1) while one is under way, and why the
     /// last one stopped, by model.
     var modelDownloads: [String: Double] = [:]
@@ -213,6 +220,7 @@ final class AppModel {
                 self.pending = pending
                 self.todoMeetings = todos
                 self.diskVersion += 1
+                self.syncSharingSoon()
             }
             // Recordings waiting to be processed start straight away, in the background.
             for rec in pending where rec.state == .recorded && !autoStarted.contains(rec.id) {
@@ -278,6 +286,7 @@ final class AppModel {
     /// A folder or meeting now lives at `to` (renamed or moved).
     func moved(from: String, to: String) {
         let remap = { (p: String) in p == from ? to : p.hasPrefix(from + "/") ? to + p.dropFirst(from.count) : p }
+        sharedFolderMoved(from: from, to: to)
         folder = remap(folder)
         // A summary on its way follows the meeting to where it is now.
         summarising = Set(summarising.map(remap))
@@ -304,6 +313,7 @@ final class AppModel {
 
     func move(_ path: String, into target: String) {
         guard path != target, !target.hasPrefix(path + "/"), parentOf(path) != target else { return }
+        guard confirmSharing(moving: path, into: target) else { return }
         attempt {
             moved(from: path, to: try meetings.move(path, into: target))
             toast("Moved to \(folderPath(target))")
@@ -445,6 +455,7 @@ final class AppModel {
     func setSecret(_ name: SecretName, _ value: String) {
         let before = Secrets.get(name)
         attempt { try Secrets.set(name, value) }
+        if name == .spacefast { syncSharingSoon(always: true) }
         if name == .calendar, Secrets.get(.calendar) != before { calendarChanged() }
     }
 
@@ -797,6 +808,137 @@ final class AppModel {
         liveHelper?.terminate()
         liveHelper = nil
         liveTranscriptFor = nil
+    }
+
+    // MARK: - Sharing
+
+    /// Sharing has a Space and a key to publish to it with.
+    var sharingSetUp: Bool { !sharing.space.trimmed.isEmpty && !Secrets.get(.spacefast).isEmpty }
+
+    /// Changes what's synced or shared, saves it, and brings the Space into line.
+    func changeSharing(_ change: (inout SharingState) -> Void) {
+        change(&sharing)
+        attempt { try sharing.save() }
+        syncSharingSoon()
+    }
+
+    /// Opens a folder's Share sheet, in the main window.
+    func shareFolder(_ path: String) {
+        showWindow()
+        sharingFolder = path
+    }
+
+    /// Starts or stops syncing a folder. Stopping takes its pages off the Space and its readers with them.
+    func setFolderSynced(_ path: String, _ on: Bool) {
+        if on {
+            changeSharing { if $0.folders[path] == nil { $0.folders[path] = FolderSharing() } }
+            return
+        }
+        let readers = sharing.folders[path]?.readers.count ?? 0
+        if readers > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Stop syncing “\(baseName(path))”?"
+            alert.informativeText = "Its pages are taken off your Space, and the \(readers == 1 ? "person" : "\(readers) people") it’s shared with can’t read it any more."
+            alert.addButton(withTitle: "Stop Syncing")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        changeSharing { $0.folders[path] = nil }
+    }
+
+    /// Settings › Sharing › Check: whether the key reaches the Space, and who else can read all of it.
+    func checkSharing() async -> (ok: Bool, text: String) {
+        let spacefast = Spacefast(space: sharing.space, key: Secrets.get(.spacefast))
+        do {
+            let info = try await spacefast.info()
+            let team = try await spacefast.access().team
+            sharing.address = info.address
+            try? sharing.save()
+            if let team, team.members > 1 {
+                return (false, "It works, but \(team.members - 1) other \(team.members == 2 ? "person" : "people") in “\(team.name)”, the team that owns this Space, can read everything on it. Use a Space in a team of your own.")
+            }
+            return (true, "“\(info.name)” at \(info.address)")
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    /// A folder that syncs was renamed or moved here: it goes on syncing, and the people it was
+    /// shared with are not carried over.
+    private func sharedFolderMoved(from: String, to: String) {
+        let had = sharing.folders.filter { $0.key == from || $0.key.hasPrefix(from + "/") }
+        guard !had.isEmpty else { return }
+        let readers = had.values.reduce(0) { $0 + $1.readers.count }
+        sharing.folderMoved(from: from, to: to)
+        attempt { try sharing.save() }
+        if readers > 0 {
+            let alert = NSAlert()
+            alert.messageText = "“\(baseName(to))” is no longer shared with anyone"
+            alert.informativeText = "It was renamed or moved, so the \(readers == 1 ? "person" : "\(readers) people") it was shared with can’t read it any more. It still syncs. Share it again from its menu in the sidebar."
+            alert.runModal()
+        }
+    }
+
+    /// Moving something into a shared folder shows it to that folder's readers: asked first.
+    private func confirmSharing(moving path: String, into target: String) -> Bool {
+        let gained = sharing.readersGained(moving: path, into: target)
+        guard !gained.isEmpty else { return true }
+        let names = gained.prefix(6).map { $0.name.isEmpty ? $0.email : $0.name }.joined(separator: ", ") + (gained.count > 6 ? " and \(gained.count - 6) more" : "")
+        let alert = NSAlert()
+        alert.messageText = "Share “\(baseName(path))” with \(gained.count == 1 ? "1 more person" : "\(gained.count) more people")?"
+        alert.informativeText = "“\(folderPath(target))” is shared, so moving this there lets them read it: \(names)."
+        alert.addButton(withTitle: "Move and Share")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// A sync shortly: changes in the Meetings folder come in bursts.
+    func syncSharingSoon(always: Bool = false) {
+        guard sharingSetUp, always || !sharing.folders.isEmpty || sharing.published != nil else { return }
+        if sharingBusy {
+            sharingAgain = true
+            return
+        }
+        sharingTask?.cancel()
+        sharingTask = Task {
+            if !always { try? await Task.sleep(for: .seconds(3)) }
+            if Task.isCancelled { return }
+            await syncSharingNow(always: always)
+        }
+    }
+
+    private func syncSharingNow(always: Bool) async {
+        sharingBusy = true
+        sharingAgain = false
+        var state = sharing
+        let before = state.folders
+        let meetings = meetings, owner = config.myName
+        let spacefast = Spacefast(space: state.space, key: Secrets.get(.spacefast))
+        do {
+            let report = try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: owner, always: always)
+            if !report.unchanged {
+                state.lastSync = isoString(Date())
+                state.lastError = nil
+                if !report.invited.isEmpty { toast("Invited \(report.invited.joined(separator: ", "))") }
+            }
+            if !report.forgotten.isEmpty {
+                toast("\(report.forgotten.map(baseName).joined(separator: ", ")) \(report.forgotten.count == 1 ? "is" : "are") no longer in your Meetings folder, so no longer synced or shared")
+            }
+        } catch {
+            state.lastError = error.localizedDescription
+        }
+        // Something changed in the window while this ran: that's kept, and it syncs again.
+        let changedMeanwhile = sharing.folders != before
+        if changedMeanwhile {
+            sharing.lastSync = state.lastSync
+            sharing.lastError = state.lastError
+            sharing.published = nil
+        } else {
+            sharing = state
+        }
+        try? sharing.save()
+        sharingBusy = false
+        if sharingAgain || changedMeanwhile { syncSharingSoon() }
     }
 
     // MARK: - Menu bar

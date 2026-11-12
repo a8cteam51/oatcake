@@ -33,7 +33,7 @@ public enum Secrets {
     public static func describe(_ name: SecretName) -> (saved: Bool, hint: String) {
         guard let value = keychainRead(account: name.rawValue), !value.isEmpty else {
             let inherited = ProcessInfo.processInfo.environment[name.environmentVariable]
-            return (false, inherited != nil ? "Using the address from your shell" : "")
+            return (false, inherited != nil ? "Using the one from your shell" : "")
         }
         let host = URL(string: value.replacingOccurrences(of: "webcal:", with: "https:", options: [.anchored, .caseInsensitive]))?.host
         return (true, host.map { "Saved · \($0)" } ?? "Saved")

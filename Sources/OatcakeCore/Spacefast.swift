@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // Spacefast's API, as far as sharing needs it: publishing pages to one Space and saying who can
@@ -8,10 +9,15 @@ public struct Spacefast: Sendable {
     var key: String
     var base: URL
 
-    public init(space: String, key: String, base: URL = URL(string: "https://api.spacefast.com")!) {
+    public init(space: String, key: String, base: URL? = nil) {
         self.space = space.trimmed
         self.key = key.trimmed
-        self.base = base
+        self.base = base ?? Self.testServer ?? URL(string: "https://api.spacefast.com")!
+    }
+
+    /// For trying sharing without Spacefast: OATCAKE_SPACEFAST_API names a stand-in on this Mac. Anywhere else is ignored.
+    static let testServer: URL? = ProcessInfo.processInfo.environment["OATCAKE_SPACEFAST_API"].flatMap(URL.init(string:)).flatMap {
+        ["127.0.0.1", "localhost"].contains($0.host ?? "") ? $0 : nil
     }
 
     public struct SpaceInfo: Equatable, Sendable {
@@ -147,6 +153,19 @@ public struct SharingReport: Equatable, Sendable {
     public var removed = 0
     /// Synced folders that had gone from the Meetings folder, and so stopped syncing.
     public var forgotten: [String] = []
+    /// Nothing had changed since the last sync, so Spacefast wasn't contacted.
+    public var unchanged = false
+}
+
+/// What a sync would leave on the Space: every page, and who reads what.
+func shareFingerprint(_ files: [SiteFile], _ state: SharingState) -> String {
+    var hash = SHA256()
+    for file in files {
+        hash.update(data: Data(file.path.utf8))
+        hash.update(data: Data(SHA256.hash(data: file.data)))
+    }
+    for (email, scopes) in wantedScopes(state).sorted(by: { $0.key < $1.key }) { hash.update(data: Data("\(email)=\(scopes.joined(separator: ","))\n".utf8)) }
+    return hash.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
 /**
@@ -154,13 +173,26 @@ public struct SharingReport: Equatable, Sendable {
  * than they should see: folders that have gone are forgotten, then access is taken away, then the
  * pages are published, then the links publishing makes are revoked, and only then is new access
  * given. If any step fails, the ones after it don't happen.
+ *
+ * When the pages and readers are what the last sync left, nothing is sent, unless `always` is set
+ * (which also puts right anything changed on Spacefast itself).
  */
-public func syncSharing(_ state: inout SharingState, meetings: Meetings, spacefast: Spacefast, owner: String) async throws -> SharingReport {
+public func syncSharing(_ state: inout SharingState, meetings: Meetings, spacefast: Spacefast, owner: String, always: Bool = false) async throws -> SharingReport {
     var report = SharingReport()
+    // A Meetings folder that isn't there (a drive not connected, say) is not a Meetings folder with
+    // nothing in it: syncing now would take every folder off the Space and every reader with it.
+    guard FileManager.default.isDirectory(meetings.root) else { throw OatcakeError("Your Meetings folder isn’t available, so nothing was synced.") }
     let tree = meetings.tree()
     report.forgotten = state.forgetMissing(in: tree)
     // Worked out before anything is sent, so two folders wanting one address stop the sync here.
     let files = try sharedSite(state, meetings: meetings, tree: tree, owner: owner)
+    let fingerprint = shareFingerprint(files, state)
+    if !always, fingerprint == state.published {
+        report.unchanged = true
+        return report
+    }
+    // Until this sync has finished, the Space isn't known to match anything.
+    state.published = nil
 
     let plan = sharingPlan(state, people: try await spacefast.people(), links: try await spacefast.links())
     for link in plan.before.revokeLinks { try await spacefast.revokeLink(link) }
@@ -178,5 +210,6 @@ public func syncSharing(_ state: inout SharingState, meetings: Meetings, spacefa
         try await spacefast.invite(email, scopes: scopes)
         report.invited.append(email)
     }
+    state.published = fingerprint
     return report
 }

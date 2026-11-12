@@ -38,6 +38,11 @@ public struct SharingState: Codable, Equatable, Sendable {
     public var folders: [String: FolderSharing] = [:]
     public var lastSync: String?
     public var lastError: String?
+    /// A fingerprint of what the last sync left on the Space (pages and readers): a sync that would
+    /// leave the same again has nothing to do.
+    public var published: String?
+    /// Where the Space's pages are served, learnt when it's checked: for showing a folder's address.
+    public var address: String?
 
     public init() {}
 
@@ -47,6 +52,8 @@ public struct SharingState: Codable, Equatable, Sendable {
         folders = (try? c.decodeIfPresent([String: FolderSharing].self, forKey: .folders)) ?? [:]
         lastSync = try? c.decodeIfPresent(String.self, forKey: .lastSync)
         lastError = try? c.decodeIfPresent(String.self, forKey: .lastError)
+        published = try? c.decodeIfPresent(String.self, forKey: .published)
+        address = try? c.decodeIfPresent(String.self, forKey: .address)
     }
 
     public static func load(from file: URL = Paths.sharing) -> SharingState { tryJSON(SharingState.self, file) ?? SharingState() }

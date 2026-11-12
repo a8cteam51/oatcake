@@ -16,6 +16,7 @@ struct SettingsView: View {
             Form { transcription }.formStyle(.grouped).tabItem { Label("Transcription", systemImage: "waveform") }.tag("transcription")
             Form { llmSection; reasoningSection; instructionsSections; jargonSection }.formStyle(.grouped).tabItem { Label("Summaries", systemImage: "text.alignleft") }.tag("summaries")
             Form { storage }.formStyle(.grouped).tabItem { Label("Storage", systemImage: "folder") }.tag("storage")
+            Form { SharingSettings() }.formStyle(.grouped).tabItem { Label("Sharing", systemImage: "person.2") }.tag("sharing")
             Form { UpdatesSection() }.formStyle(.grouped).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
         }
         .frame(width: 620, height: 600)
@@ -308,7 +309,7 @@ func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
 }
 
 extension Text {
-    fileprivate func settingsHint(_ color: Color = .secondary) -> some View {
+    func settingsHint(_ color: Color = .secondary) -> some View {
         font(.caption).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
             .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -457,7 +458,7 @@ private struct ImportRow: View {
  * shows as a hint ("Saved · calendar.google.com"). A new value saves on Return, on leaving the
  * field, or after a pause in typing.
  */
-private struct SecretField: View {
+struct SecretField: View {
     @Environment(AppModel.self) private var model
     let name: SecretName
     let placeholder: String

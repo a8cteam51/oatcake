@@ -47,7 +47,7 @@ flowchart TD
     class guess,summary llm
 ```
 
-Everything runs on this Mac, and nothing from a call is sent anywhere. Silero, Parakeet, pyannote
+Everything runs on this Mac, and nothing from a call is sent anywhere unless you set a folder to sync (see Sharing folders). Silero, Parakeet, pyannote
 and WeSpeaker are small speech models (Parakeet is 0.6B parameters), run on the Neural Engine
 through [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML builds: they turn
 audio into text and voices into fingerprints, take no prompts, and can't write anything else. The
@@ -192,6 +192,47 @@ Granola. The folder holds:
 Quill's search index (`vector_store.db`), contacts, threads and settings aren't imported, and
 neither is a meeting with nothing in it (no words, notes or recording). Importing again skips
 meetings already there. The import is in `Sources/OatcakeCore/Quill.swift`.
+
+## Sharing folders
+
+Off unless you set it up. Sharing puts the folders you choose on a [Spacefast](https://spacefast.com)
+Space of your own, as pages other people can be given, folder by folder.
+
+- **Set up** (Settings › Sharing): the Space's name and an API key limited to it that can publish
+  and manage access. The key is kept in your Keychain. Use a private Space in a team with nobody
+  else in it: everyone in the team that owns a Space can read all of it, and Check says so when
+  there's anyone.
+- **Sync a folder**: right-click it in the sidebar, Sync to Spacefast. Its meetings are published
+  as pages, and again whenever something in it changes, without a press each time. A folder inside
+  a synced folder syncs with it. Folders that aren't synced never leave the Mac.
+- **What's published**: each meeting's summary and to-dos, and its transcript only if the folder's
+  Share sheet says so. Your own notes and the call audio never are. Pages are plain HTML made from
+  the Markdown with everything escaped; only web links are links.
+- **Share a folder**: Share… on a synced folder, then a name and an email address. Spacefast emails
+  the person a link; they need no account, and can read that folder and everything inside it.
+  Nobody but you can read a synced folder until you add someone.
+- **Addresses** follow the folders, in plain lower-case words: `Clients/Acme Corp` is at
+  `…/clients/acme-corp/`. Two folders that would get the same address stop the sync until one is
+  renamed.
+
+Access on Spacefast belongs to an address, not to a folder, so Oatcake errs towards taking it away:
+
+| What happens | Its pages | Its readers |
+|---|---|---|
+| A synced folder is renamed or moved in Oatcake | Follow it to the new address | Removed; add them again |
+| Something is moved into a shared folder | Go with it | Asked first, naming who will be able to read it |
+| A synced folder is renamed, moved or deleted in Finder, or while Oatcake is closed | Removed | Removed |
+| Sync is turned off for a folder | Removed | Removed |
+
+Each sync takes access away first, then publishes the pages as the whole of the Space (anything
+no longer synced is gone from the live site), then revokes any link that opens the Space, and only
+then gives new access; if a step fails, the ones after it don't happen. A Meetings folder that
+isn't there (a drive not connected) stops the sync rather than emptying the Space. Spacefast keeps
+earlier versions of a Space, which only its owner can reach, so a page removed from the live site
+isn't erased from Spacefast.
+
+Not built yet: signing in to Spacefast from the app rather than pasting a key, and choosing people
+from a meeting's attendees.
 
 ## What's next
 
@@ -468,6 +509,9 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   own models: a server of yours decides for itself.
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
+- **Sharing** (Settings › Sharing): your Spacefast Space and its key, the folders that sync and who
+  each is shared with (kept in `sharing.json` beside `config.json`; the key in the Keychain). See
+  Sharing folders.
 - **Keep call audio** (Settings › Storage): off by default; audio is deleted once a meeting is saved.
 - **Live transcript**, **Offer to record when a call starts**, **Stop recording when the call
   ends:** all on by default (Settings › General); see Record above.
@@ -508,6 +552,9 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   never records: the recorder app captures audio on its own.
 - Summaries and answers are drawn as Markdown with any HTML shown as text. Links in Ask's answers
   to anything but a meeting are shown as text, not made clickable.
+- Sharing sends a synced folder's pages to Spacefast, and nothing else, over HTTPS, with a key
+  that goes nowhere else. What's said on a call can't become markup or a link on a page: all of it
+  is escaped. See Sharing folders for the order a sync works in.
 - Speech models are fetched from pinned commits (see Speech models).
 - The language model and the program that runs it are fixed builds, each checked against its
   SHA-256 before use. Its server listens only on this Mac's own address, at a port picked each
