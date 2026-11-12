@@ -703,6 +703,8 @@ private struct TestMeetings {
         #expect(thinking["presence_penalty"] as? Double == 1.5 && thinking["min_p"] as? Int == 0 && thinking["cache_prompt"] as? Bool == true)
         #expect((thinking["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
         #expect(((thinking["response_format"] as? [String: Any])?["json_schema"] as? [String: Any])?["schema"] != nil)
+        // The schema arrives as it's written, its fields in their order: the model fills them in that order.
+        #expect(String(decoding: sent[0].body, as: UTF8.self).contains("\"schema\":" + todosSchema))
         #expect(thinking["max_tokens"] as? Int == 8_192 && sent[0].messages.system == "Be brief.")
         #expect(plain["temperature"] as? Double == 0.7 && plain["top_p"] as? Double == 0.8 && plain["max_tokens"] as? Int == 20)
         #expect((plain["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false && plain["response_format"] == nil)

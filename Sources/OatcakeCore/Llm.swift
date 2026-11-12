@@ -87,10 +87,20 @@ public struct LocalChat: Sendable {
             "cache_prompt": true,
         ]
         if qwen { body["chat_template_kwargs"] = ["enable_thinking": think] }
-        if let schema, let object = try? JSONSerialization.jsonObject(with: Data(schema.utf8)) {
-            body["response_format"] = ["type": "json_schema", "json_schema": ["name": "reply", "strict": true, "schema": object]]
+        // The schema is sent exactly as it's written. The server makes the model fill in a reply's
+        // fields in the schema's order, and that order matters: asked for a to-do's time before
+        // its task, the model walks the call minute by minute and makes a to-do of each. Passed
+        // through a dictionary, the fields came out in another order (the time first).
+        let placeholder = "schema-\(UUID().uuidString)"
+        let schemaAsWritten = schema.flatMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) != nil ? $0 : nil }
+        if schemaAsWritten != nil {
+            body["response_format"] = ["type": "json_schema", "json_schema": ["name": "reply", "strict": true, "schema": placeholder]]
         }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var sent = try JSONSerialization.data(withJSONObject: body)
+        if let schemaAsWritten {
+            sent = Data(String(decoding: sent, as: UTF8.self).replacingOccurrences(of: "\"\(placeholder)\"", with: schemaAsWritten).utf8)
+        }
+        request.httpBody = sent
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
