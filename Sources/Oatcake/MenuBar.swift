@@ -44,7 +44,11 @@ final class MenuBarItem {
         }
     }
 
-    func hide() { stopHelper() }
+    func hide() {
+        stopHelper()
+        // Hidden on purpose, so it can be shown again at once: the wait is for a helper that keeps failing.
+        lastStart = .distantPast
+    }
 
     private func start() {
         lastStart = Date()
