@@ -35,6 +35,8 @@ struct MeetingListView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
+            // Who can view this folder on Spacefast, once sharing is set up.
+            if search.isEmpty, model.sharingSetUp, let folder, !folder.path.isEmpty { FolderViewers(path: folder.path).id(folder.path) }
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.callout)
                 TextField("Search all meetings", text: $query)

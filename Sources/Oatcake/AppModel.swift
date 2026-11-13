@@ -31,6 +31,14 @@ struct JobProgress: Equatable {
     var error: String?
 }
 
+/// Someone who has been chosen to view a folder and isn't invited yet.
+struct PendingViewer: Identifiable, Equatable {
+    let id = UUID()
+    var email: String
+    var name: String
+    var path: String
+}
+
 /// "Stop recording?" and the like: a question with a destructive answer.
 struct Confirmation: Identifiable {
     let id = UUID()
@@ -115,9 +123,27 @@ final class AppModel {
     /// The folder whose Share sheet is open.
     var sharingFolder: String?
     private var sharingTask: Task<Void, Never>?
-    /// Whether a key for the Space is saved: asked of the Keychain once, not on every change in the Meetings folder.
-    private var sharingKeySaved = !Secrets.get(.spacefast).isEmpty
     private var sharingAgain = false
+    /// Your sign-in to Spacefast: read from the Keychain once, when Oatcake starts.
+    let spacefastSession = SpacefastSession()
+    var sharingSignedIn = false
+    /// The sign-in page is open in the browser and Oatcake is waiting for its answer.
+    var sharingSigningIn = false
+    private var sharingSignIn: SpacefastSignIn?
+    /// The teams a Space can be made in, once asked for; nil until then.
+    var sharingTeams: [Spacefast.Team]?
+    /// The Spaces each team already has, by team, once asked for.
+    var sharingSpaces: [String: [Spacefast.SpaceInfo]] = [:]
+    var sharingCreating = false
+    /// Why signing in, listing teams or making the Space last failed.
+    var sharingProblem: String?
+    /// Who else can read all of the Space because of the team it's in, learnt when it's looked at.
+    var sharingOthers: String?
+    /// People about to be given a folder: held back for a few seconds, so an invitation can be undone before it's sent.
+    var pendingViewers: [PendingViewer] = []
+    private var pendingViewerTasks: [UUID: Task<Void, Never>] = [:]
+    /// How long an invitation waits to be undone.
+    static let viewerUndoTime: Duration = .seconds(8)
     /// How far each language model's download has got (0 to 1) while one is under way, and why the
     /// last one stopped, by model.
     var modelDownloads: [String: Double] = [:]
@@ -160,6 +186,7 @@ final class AppModel {
         let config = Config.load()
         self.config = config
         meetings = Meetings(root: config.meetingsRoot)
+        sharingSignedIn = spacefastSession.startedSignedIn
     }
 
     func start() {
@@ -457,10 +484,6 @@ final class AppModel {
     func setSecret(_ name: SecretName, _ value: String) {
         let before = Secrets.get(name)
         attempt { try Secrets.set(name, value) }
-        if name == .spacefast {
-            sharingKeySaved = !Secrets.get(.spacefast).isEmpty
-            syncSharingSoon(always: true)
-        }
         if name == .calendar, Secrets.get(.calendar) != before { calendarChanged() }
     }
 
@@ -817,14 +840,196 @@ final class AppModel {
 
     // MARK: - Sharing
 
-    /// Sharing has a Space and a key to publish to it with.
-    var sharingSetUp: Bool { !sharing.space.trimmed.isEmpty && sharingKeySaved }
+    /// Sharing has a sign-in and a Space to publish to.
+    var sharingSetUp: Bool { !sharing.space.trimmed.isEmpty && sharingSignedIn }
+
+    /// Opens Spacefast's sign-in page in the browser and waits for you to approve it there.
+    func signInToSpacefast() {
+        guard !sharingSigningIn else { return }
+        sharingSigningIn = true
+        sharingProblem = nil
+        Task {
+            do {
+                let attempt = try await SpacefastSignIn.start()
+                sharingSignIn = attempt
+                NSWorkspace.shared.open(attempt.url)
+                try await spacefastSession.signIn(try await attempt.finish())
+                sharingSignedIn = true
+                // Back from the browser, to where the next step is.
+                NSApp.activate()
+                await lookAtSharing()
+                syncSharingSoon(always: true)
+            } catch is CancellationError {
+            } catch {
+                sharingProblem = error.localizedDescription
+            }
+            sharingSignIn = nil
+            sharingSigningIn = false
+        }
+    }
+
+    func cancelSpacefastSignIn() { sharingSignIn?.cancel() }
+
+    /// Forgets the sign-in on this Mac. The Space, what's synced and who it's shared with stay as they are.
+    func signOutOfSpacefast() {
+        cancelSpacefastSignIn()
+        sharingTask?.cancel()
+        // Nobody still waiting to be invited is invited later.
+        for pending in pendingViewers { undoInvite(pending) }
+        Task { await spacefastSession.signOut() }
+        sharingSignedIn = false
+        sharingTeams = nil
+        sharingSpaces = [:]
+        sharingProblem = nil
+    }
+
+    /// What Settings › Sharing needs from Spacefast: the teams to choose from while there's no Space,
+    /// and afterwards where the Space is and who else can read all of it.
+    func lookAtSharing() async {
+        guard sharingSignedIn else { return }
+        do {
+            if sharing.space.trimmed.isEmpty {
+                sharingTeams = try await Spacefast(session: spacefastSession).teams()
+            } else {
+                let spacefast = Spacefast(space: sharing.space, session: spacefastSession)
+                let info = try await spacefast.info()
+                if !info.address.isEmpty, sharing.address != info.address {
+                    sharing.address = info.address
+                    try? sharing.save()
+                }
+                sharingOthers = sharingOthers(in: try await spacefast.access().team)
+            }
+            sharingProblem = nil
+        } catch {
+            sharingProblem = error.localizedDescription
+        }
+        sharingSignedIn = await spacefastSession.signedIn
+    }
+
+    private func sharingOthers(in team: Spacefast.OwningTeam?) -> String? {
+        guard let team, team.members > 1 else { return nil }
+        return "\(team.members - 1) other \(team.members == 2 ? "person" : "people") in “\(team.name)”, the team this Space is in, can read everything on it."
+    }
+
+    /// The Spaces a team already has, for choosing one of them. Asked once for each team.
+    func lookAtSpaces(in team: Spacefast.Team) async {
+        guard sharingSignedIn, sharingSpaces[team.id] == nil else { return }
+        do {
+            sharingSpaces[team.id] = try await Spacefast(session: spacefastSession).spaces(in: team.id)
+        } catch {
+            sharingProblem = error.localizedDescription
+            sharingSignedIn = await spacefastSession.signedIn
+        }
+    }
+
+    /// Settings › Sharing › Use This Space: a Space that's already there becomes the one Oatcake
+    /// publishes to. Asked first, because Oatcake makes a Space hold your synced folders and nothing else.
+    func useSharingSpace(_ space: Spacefast.SpaceInfo) {
+        guard sharing.space.trimmed.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = "Use “\(space.name)” for Oatcake?"
+        alert.informativeText = "Oatcake makes this Space hold your synced folders and nothing else. Any other pages on it are taken off, links that open it are revoked, and people it’s shared with who aren’t readers in Oatcake lose their access."
+        alert.addButton(withTitle: "Use This Space")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        sharing.space = space.id
+        sharing.address = space.address
+        sharing.published = nil
+        attempt { try sharing.save() }
+        sharingProblem = nil
+        Task {
+            await lookAtSharing()
+            syncSharingSoon()
+        }
+    }
+
+    /// Settings › Sharing › Create Oatcake Space: a private Space of your own in the team you chose.
+    func createSharingSpace(in team: Spacefast.Team) {
+        guard !sharingCreating, sharing.space.trimmed.isEmpty else { return }
+        sharingCreating = true
+        sharingProblem = nil
+        Task {
+            do {
+                let made = try await Spacefast(session: spacefastSession).createSpace(team: team.id)
+                sharing.space = made.id
+                sharing.address = made.address
+                sharing.published = nil
+                attempt { try sharing.save() }
+                await lookAtSharing()
+                syncSharingSoon()
+            } catch {
+                sharingProblem = error.localizedDescription
+                sharingSignedIn = await spacefastSession.signedIn
+            }
+            sharingCreating = false
+        }
+    }
 
     /// Changes what's synced or shared, saves it, and brings the Space into line.
     func changeSharing(_ change: (inout SharingState) -> Void) {
         change(&sharing)
         attempt { try sharing.save() }
         syncSharingSoon()
+    }
+
+    /// Changes a synced folder's own settings. A folder inside a synced one gets settings of its own the first time.
+    func changeFolderSharing(_ path: String, _ change: (inout FolderSharing) -> Void) {
+        changeSharing { state in
+            let above = state.syncedFolder(over: parentOf(path)).flatMap { path.contains("/") ? $0 : nil }
+            var folder = state.folders[path] ?? FolderSharing(transcript: above.flatMap { state.folders[$0]?.transcript } ?? false)
+            change(&folder)
+            state.folders[path] = folder
+        }
+    }
+
+    enum InviteOutcome: Equatable {
+        /// Asked and agreed: they're invited once the time to undo it has passed.
+        case waiting
+        case cancelled
+        case problem(String)
+    }
+
+    /**
+     * Lets someone read a synced folder and everything in it, which sends them an email. So it's
+     * asked first, and then held back for a few seconds in which it can be undone: nothing is saved
+     * or sent until then, and quitting in that time means they aren't invited.
+     */
+    func inviteReader(email: String, name: String = "", to path: String) -> InviteOutcome {
+        let reader = ShareReader(email: email, name: name)
+        // Enough to catch a slip; Spacefast is the judge of whether it's an address.
+        guard reader.email.range(of: #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, options: .regularExpression) != nil else { return .problem("That doesn’t look like an email address.") }
+        guard let synced = sharing.syncedFolder(over: path) else { return .problem("This folder isn’t synced to Spacefast yet.") }
+        guard !sharing.readers(of: path).contains(where: { $0.email == reader.email }) else { return .problem("\(reader.email) can already view this folder.") }
+        guard !pendingViewers.contains(where: { $0.path == path && $0.email == reader.email }) else { return .problem("\(reader.email) is about to be invited.") }
+        let transcripts = sharing.folders[path]?.transcript ?? sharing.folders[synced]?.transcript ?? false
+        let alert = NSAlert()
+        alert.messageText = "Invite \(reader.email) to view “\(baseName(path))”?"
+        alert.informativeText = "Spacefast emails them a link. They’ll be able to read the \(transcripts ? "summary, to-dos and transcript" : "summary and to-dos") of every meeting in this folder and in the folders inside it."
+        alert.addButton(withTitle: "Invite")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return .cancelled }
+        let pending = PendingViewer(email: reader.email, name: reader.name, path: path)
+        pendingViewers.append(pending)
+        pendingViewerTasks[pending.id] = Task {
+            try? await Task.sleep(for: Self.viewerUndoTime)
+            guard !Task.isCancelled, let at = pendingViewers.firstIndex(of: pending) else { return }
+            pendingViewers.remove(at: at)
+            pendingViewerTasks[pending.id] = nil
+            // The folder may have stopped syncing, or been renamed or moved, in the meantime: then nobody is invited.
+            guard sharing.isSynced(path) else { return }
+            changeFolderSharing(path) { folder in
+                folder.readers.removeAll { $0.email == reader.email }
+                folder.readers.append(reader)
+            }
+        }
+        return .waiting
+    }
+
+    /// Takes back an invitation that hasn't been sent yet.
+    func undoInvite(_ pending: PendingViewer) {
+        pendingViewerTasks[pending.id]?.cancel()
+        pendingViewerTasks[pending.id] = nil
+        pendingViewers.removeAll { $0.id == pending.id }
     }
 
     /// Opens a folder's Share sheet, in the main window.
@@ -851,23 +1056,6 @@ final class AppModel {
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         changeSharing { state in for folder in stopping.keys { state.folders[folder] = nil } }
-    }
-
-    /// Settings › Sharing › Check: whether the key reaches the Space, and who else can read all of it.
-    func checkSharing() async -> (ok: Bool, text: String) {
-        let spacefast = Spacefast(space: sharing.space, key: Secrets.get(.spacefast))
-        do {
-            let info = try await spacefast.info()
-            let team = try await spacefast.access().team
-            sharing.address = info.address
-            try? sharing.save()
-            if let team, team.members > 1 {
-                return (false, "It works, but \(team.members - 1) other \(team.members == 2 ? "person" : "people") in “\(team.name)”, the team that owns this Space, can read everything on it. Use a Space in a team of your own.")
-            }
-            return (true, "“\(info.name)” at \(info.address)")
-        } catch {
-            return (false, error.localizedDescription)
-        }
     }
 
     /// A folder that syncs was renamed or moved here: it goes on syncing, and the people it was
@@ -920,7 +1108,7 @@ final class AppModel {
         var state = sharing
         let before = state.folders
         let meetings = meetings, owner = config.myName
-        let spacefast = Spacefast(space: state.space, key: Secrets.get(.spacefast))
+        let spacefast = Spacefast(space: state.space, session: spacefastSession)
         do {
             let report = try await syncSharing(&state, meetings: meetings, spacefast: spacefast, owner: owner, always: always)
             if !report.unchanged {
@@ -933,6 +1121,8 @@ final class AppModel {
             }
         } catch {
             state.lastError = error.localizedDescription
+            // A sign-in Spacefast no longer takes is forgotten, and Settings asks for it again.
+            sharingSignedIn = await spacefastSession.signedIn
         }
         // Something changed in the window while this ran: that's kept, and it syncs again.
         let changedMeanwhile = sharing.folders != before

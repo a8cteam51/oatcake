@@ -1164,9 +1164,10 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
             switch (request.method, request.path) {
             case ("GET", "/v1/spaces/notes"): return data(["id": "spc_1", "slug": "notes", "title": "Notes", "liveUrl": "https://notes.example/"])
             case ("GET", "/v1/spaces/notes/people"):
-                // The shape Spacefast answers in: the people, and the team that owns the Space.
-                return data(["people": [["id": "per_1", "email": "old@example.com", "status": "accepted", "grants": [["scope": "/team/", "role": "viewer", "revokedAt": NSNull()]]],
-                                        ["id": "per_2", "email": "pat@example.com", "status": "pending", "grants": [["scope": "/clients/", "role": "viewer", "revokedAt": NSNull()], ["scope": "/gone/", "role": "viewer", "revokedAt": NSNull()], ["scope": "/was/", "role": "viewer", "revokedAt": "2026-11-01T00:00:00Z"]]],
+                // The shape Spacefast answers in: the people, and the team that owns the Space. A folder's
+                // address comes back without its closing slash ("/clients" for the "/clients/" that was sent).
+                return data(["people": [["id": "per_1", "email": "old@example.com", "status": "accepted", "grants": [["scope": "/team", "role": "viewer", "revokedAt": NSNull()]]],
+                                        ["id": "per_2", "email": "pat@example.com", "status": "pending", "grants": [["scope": "/clients", "role": "viewer", "revokedAt": NSNull()], ["scope": "/gone", "role": "viewer", "revokedAt": NSNull()], ["scope": "/was", "role": "viewer", "revokedAt": "2026-11-01T00:00:00Z"]]],
                                         ["id": "per_3", "email": "left@example.com", "status": "revoked", "grants": []]],
                              "inheritedTeamAccess": ["teamName": "Sam", "members": [["userId": "u1"], ["userId": "u2"]]]])
             case ("GET", "/v1/spaces/notes/share-links"): return data([["id": "lnk_1", "active": true, "revokedAt": NSNull()], ["id": "lnk_0", "active": false, "revokedAt": "2026-11-01T00:00:00Z"]])
@@ -1242,13 +1243,189 @@ private func with<T>(_ value: T, _ change: (inout T) -> Void) -> T {
         }
         #expect(kept.folders == state.folders && server.requests.count == before)
 
-        // The key only ever goes to Spacefast over HTTPS, and a refused key is said plainly.
+        // The sign-in only ever goes to Spacefast over HTTPS, and a refused one is said plainly.
         let plain = Spacefast(space: "notes", key: "sfa_made-up", base: URL(string: "http://spacefast.example")!)
         await #expect(throws: OatcakeError("Spacefast is only reached over HTTPS.")) { _ = try await plain.info() }
         let refusing = try await StandIn { _ in StandIn.Response(status: 401, body: Data(#"{"code":"unauthorized","message":"Bad token."}"#.utf8)) }
-        await #expect(throws: OatcakeError("Spacefast didn’t accept the key. Check it in Settings › Sharing.")) {
+        await #expect(throws: OatcakeError("Spacefast didn’t accept your sign-in. Sign out and in again in Settings › Sharing.")) {
             _ = try await Spacefast(space: "notes", key: "sfa_wrong", base: URL(string: refusing.address)!).info()
         }
+    }
+}
+
+@Suite struct SpacefastSignInTests {
+    /// What a stand-in was sent as a form.
+    private func form(_ request: StandIn.Request) -> [String: String] {
+        var fields = URLComponents()
+        fields.percentEncodedQuery = String(decoding: request.body, as: UTF8.self)
+        return Dictionary((fields.queryItems ?? []).map { ($0.name, $0.value ?? "") }) { $1 }
+    }
+
+    /// Counts up, for a stand-in that answers differently each time.
+    private final class Count: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func next() -> Int { lock.withLock { n += 1; return n } }
+    }
+
+    /// What a session saved, in order.
+    private final class Kept: @unchecked Sendable {
+        private let lock = NSLock()
+        private var all: [String] = []
+        func keep(_ text: String) { lock.withLock { all.append(text) } }
+        var last: String? { lock.withLock { all.last } }
+    }
+
+    /// The browser being sent back to Oatcake.
+    private func visit(_ redirect: String, _ query: [String: String], path: String = "/callback") async throws -> (status: Int, page: String) {
+        var url = try #require(URLComponents(string: redirect.replacingOccurrences(of: "/callback", with: path)))
+        url.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+        let (data, response) = try await URLSession.shared.data(from: try #require(url.url))
+        return ((response as? HTTPURLResponse)?.statusCode ?? 0, String(decoding: data, as: UTF8.self))
+    }
+
+    @Test func signingIn() async throws {
+        let server = try await StandIn { _ in StandIn.Response(body: Data(#"{"access_token":"at-1","refresh_token":"rt-1","expires_in":3600,"token_type":"Bearer"}"#.utf8)) }
+        let base = try #require(URL(string: server.address))
+        let attempt = try await SpacefastSignIn.start(base: base)
+        let page = try #require(URLComponents(url: attempt.url, resolvingAgainstBaseURL: false))
+        func asked(_ name: String) -> String { page.queryItems?.first { $0.name == name }?.value ?? "" }
+        #expect(page.path == "/v1/auth/oauth2/authorize" && asked("response_type") == "code" && asked("code_challenge_method") == "S256")
+        #expect(asked("client_id") == "https://a8cteam51.github.io/oatcake/oauth/client.json")
+        #expect(asked("scope") == "teams:read spaces:read spaces:write publish:write offline_access")
+        let redirect = asked("redirect_uri")
+        #expect(redirect.hasPrefix("http://127.0.0.1:") && redirect.hasSuffix("/callback"))
+
+        async let waited = attempt.finish()
+        // Anything that isn't this sign-in's answer is turned away, and the wait goes on.
+        #expect(try await visit(redirect, ["code": "someone-elses", "state": "not-ours", "iss": server.address + "/v1/auth"]).status == 400)
+        #expect(try await visit(redirect, [:], path: "/favicon.ico").status == 404)
+        let back = try await visit(redirect, ["code": "the+code", "state": asked("state"), "iss": server.address + "/v1/auth"])
+        #expect(back.status == 200 && back.page.contains("Signed in to Spacefast"))
+        let tokens = try await waited
+        #expect(tokens.access == "at-1" && tokens.refresh == "rt-1" && (tokens.expires ?? .distantPast) > Date().addingTimeInterval(3500))
+
+        // The code is swapped once, with proof that this is the sign-in that was started.
+        #expect(server.requests.map { "\($0.method) \($0.path)" } == ["POST /v1/auth/oauth2/token"])
+        let sent = form(server.requests[0])
+        #expect(sent["grant_type"] == "authorization_code" && sent["code"] == "the+code" && sent["redirect_uri"] == redirect && sent["client_id"] == SpacefastAccount.client)
+        #expect(SpacefastSignIn.challenge(for: sent["code_verifier"] ?? "") == asked("code_challenge"))
+    }
+
+    @Test func signInsThatDoNotFinish() async throws {
+        let server = try await StandIn { _ in StandIn.Response(status: 400, body: Data(#"{"error":"invalid_grant","error_description":"The code has been used."}"#.utf8)) }
+        let base = try #require(URL(string: server.address))
+        func redirect(_ attempt: SpacefastSignIn) -> (address: String, state: String) {
+            let items = URLComponents(url: attempt.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            return (items.first { $0.name == "redirect_uri" }?.value ?? "", items.first { $0.name == "state" }?.value ?? "")
+        }
+        // Not approved on Spacefast's page.
+        let declined = try await SpacefastSignIn.start(base: base)
+        let first = Task { try await declined.finish() }
+        #expect(try await visit(redirect(declined).address, ["error": "access_denied", "state": redirect(declined).state]).page.contains("Not signed in"))
+        await #expect(throws: OatcakeError("The sign-in wasn’t approved.")) { _ = try await first.value }
+        // An answer that doesn't say it's from Spacefast isn't swapped for anything.
+        let elsewhere = try await SpacefastSignIn.start(base: base)
+        let second = Task { try await elsewhere.finish() }
+        #expect(try await visit(redirect(elsewhere).address, ["code": "c", "state": redirect(elsewhere).state, "iss": "https://elsewhere.example"]).status == 400)
+        await #expect(throws: OatcakeError("The sign-in’s answer didn’t come from Spacefast, so it wasn’t used.")) { _ = try await second.value }
+        #expect(server.requests.isEmpty)
+        // A code Spacefast won't take.
+        let stale = try await SpacefastSignIn.start(base: base)
+        let third = Task { try await stale.finish() }
+        _ = try await visit(redirect(stale).address, ["code": "used", "state": redirect(stale).state, "iss": server.address + "/v1/auth"])
+        await #expect(throws: OatcakeError("Spacefast didn’t finish the sign-in: The code has been used.")) { _ = try await third.value }
+        // Cancelled from Settings, and nobody ever coming back.
+        let cancelled = try await SpacefastSignIn.start(base: base)
+        let fourth = Task { try await cancelled.finish() }
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await fourth.value }
+        let forgotten = try await SpacefastSignIn.start(base: base)
+        await #expect(throws: OatcakeError("Nobody signed in, so Oatcake stopped waiting.")) { _ = try await forgotten.finish(timeout: .milliseconds(50)) }
+    }
+
+    @Test func aSignInIsRenewedAndTheRenewalKept() async throws {
+        let count = Count()
+        let server = try await StandIn { _ in
+            let n = count.next()
+            return StandIn.Response(body: Data(#"{"access_token":"at-\#(n)","refresh_token":"rt-\#(n)","expires_in":3600}"#.utf8))
+        }
+        let base = try #require(URL(string: server.address))
+        let kept = Kept()
+        let running = SpacefastTokens(access: "at-0", refresh: "rt-0", expires: Date().addingTimeInterval(20))
+        let session = SpacefastSession(saved: running.saved, save: { kept.keep($0) }, base: base)
+        #expect(session.startedSignedIn)
+        // Two requests at once renew once: Spacefast takes each renewal a single time.
+        async let one = session.token()
+        async let two = session.token()
+        #expect(try await [one, two] == ["at-1", "at-1"])
+        #expect(server.requests.count == 1)
+        let sent = form(server.requests[0])
+        #expect(sent["grant_type"] == "refresh_token" && sent["refresh_token"] == "rt-0" && sent["client_id"] == SpacefastAccount.client)
+        // The new renewal is what's in the Keychain now, and nothing is asked again until it's due.
+        #expect(SpacefastTokens(saved: kept.last ?? "")?.refresh == "rt-1")
+        #expect(try await session.token() == "at-1" && server.requests.count == 1)
+
+        // A renewal Spacefast refuses ends the sign-in; Spacefast being unwell doesn't.
+        let refusing = try await StandIn { _ in StandIn.Response(status: 400, body: Data(#"{"error":"invalid_grant"}"#.utf8)) }
+        let ended = SpacefastSession(saved: running.saved, save: { kept.keep($0) }, base: try #require(URL(string: refusing.address)))
+        await #expect(throws: OatcakeError("Spacefast needs you to sign in again, in Settings › Sharing.")) { _ = try await ended.token() }
+        #expect(await !ended.signedIn && kept.last == "")
+        let unwell = try await StandIn { _ in StandIn.Response(status: 503, body: Data("busy".utf8)) }
+        let waiting = SpacefastSession(saved: running.saved, save: { kept.keep($0) }, base: try #require(URL(string: unwell.address)))
+        await #expect(throws: OatcakeError("Spacefast returned 503 when signing in.")) { _ = try await waiting.token() }
+        #expect(await waiting.signedIn)
+
+        // Signed out, there's nothing to send; and a key in the environment is sent as it is.
+        let nobody = SpacefastSession(saved: "", save: { _ in }, base: base)
+        #expect(!nobody.startedSignedIn)
+        await #expect(throws: OatcakeError("Sign in to Spacefast in Settings › Sharing first.")) { _ = try await nobody.token() }
+        try await nobody.signIn(SpacefastTokens(access: "at-9", refresh: "rt-9", expires: Date().addingTimeInterval(3600)))
+        #expect(try await nobody.token() == "at-9")
+        await nobody.signOut()
+        #expect(await !nobody.signedIn)
+        #expect(try await SpacefastSession(saved: "sfa_made-up", save: { _ in }, base: base).token() == "sfa_made-up")
+    }
+
+    @Test func teamsAndANewSpace() async throws {
+        let server = try await StandIn { request in
+            func data(_ value: Any, _ status: Int = 200) -> StandIn.Response { StandIn.Response(status: status, body: try! JSONSerialization.data(withJSONObject: ["data": value])) }
+            switch (request.method, request.path) {
+            case ("GET", "/v1/teams?limit=100"):
+                return data([["id": "team_1", "name": "Sam", "slug": "sam", "role": "owner"], ["id": "team_2", "name": "Studio", "slug": "studio", "role": "member"]])
+            case ("POST", "/v1/spaces"):
+                return data(["space": ["id": "spc_9", "slug": "oatcake-x1", "title": "Oatcake", "liveUrl": "https://oatcake-x1.example/"], "access": NSNull()], 201)
+            // A team's Spaces come a page at a time.
+            case ("GET", "/v1/teams/team_2/spaces?limit=100"):
+                return StandIn.Response(body: try! JSONSerialization.data(withJSONObject: [
+                    "data": [["id": "spc_1", "slug": "notes", "title": "Notes", "liveUrl": "https://notes.example/"], ["id": "spc_2", "slug": "oatcake-a", "title": "Oatcake", "liveUrl": "https://oatcake-a.example/"]],
+                    "pagination": ["nextCursor": "next/page", "hasMore": true]]))
+            case ("GET", "/v1/teams/team_2/spaces?limit=100&cursor=next%2Fpage"):
+                return StandIn.Response(body: try! JSONSerialization.data(withJSONObject: [
+                    "data": [["id": "spc_3", "slug": "old", "title": "Old", "liveUrl": "https://old.example/"]], "pagination": ["nextCursor": NSNull(), "hasMore": false]]))
+            case ("GET", "/v1/teams/team_1/spaces?limit=100"): return data([[String: Any]]())
+            default: return StandIn.Response(status: 404, body: Data(#"{"code":"not_found"}"#.utf8))
+            }
+        }
+        let base = try #require(URL(string: server.address))
+        let spacefast = Spacefast(session: SpacefastSession(saved: "at-1", save: { _ in }, base: base), base: base)
+        #expect(try await spacefast.teams() == [Spacefast.Team(id: "team_1", name: "Sam"), Spacefast.Team(id: "team_2", name: "Studio")])
+        #expect(try await spacefast.createSpace(team: "team_2") == Spacefast.SpaceInfo(id: "spc_9", name: "Oatcake", address: "https://oatcake-x1.example/"))
+        // Private, in the team that was chosen, and with no link that opens it.
+        let asked = server.requests[1].json
+        #expect(asked["teamId"] as? String == "team_2" && asked["title"] as? String == "Oatcake" && asked["access"] as? String == "private")
+        #expect(asked["capabilities"] as? [String] == ["optional_access"])
+        #expect(server.requests.allSatisfy { $0.headers["authorization"] == "Bearer at-1" })
+        // The Spaces a team already has, every page of them, for choosing one instead.
+        #expect(try await spacefast.spaces(in: "team_2") == [
+            Spacefast.SpaceInfo(id: "spc_1", name: "Notes", address: "https://notes.example/"), Spacefast.SpaceInfo(id: "spc_2", name: "Oatcake", address: "https://oatcake-a.example/"),
+            Spacefast.SpaceInfo(id: "spc_3", name: "Old", address: "https://old.example/"),
+        ])
+        #expect(try await spacefast.spaces(in: "team_1").isEmpty)
+        // Until there's a Space, nothing that needs one is sent.
+        let sent = server.requests.count
+        await #expect(throws: OatcakeError("Make your Oatcake Space in Settings › Sharing first.")) { _ = try await spacefast.info() }
+        #expect(server.requests.count == sent)
     }
 }
 

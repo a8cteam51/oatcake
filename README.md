@@ -195,22 +195,33 @@ meetings already there. The import is in `Sources/OatcakeCore/Quill.swift`.
 
 ## Sharing folders
 
-Off unless you set it up. Sharing puts the folders you choose on a [Spacefast](https://spacefast.com)
-Space of your own, as pages other people can be given, folder by folder.
+Optional, and off unless you set it up: until you sign in under Settings › Sharing, nothing about
+sharing shows anywhere else in Oatcake, and nothing is asked of Spacefast. Sharing puts the folders
+you choose on a [Spacefast](https://spacefast.com) Space of your own, as pages other people can be
+given, folder by folder.
 
-- **Set up** (Settings › Sharing): the Space's name and an API key limited to it that can publish
-  and manage access. The key is kept in your Keychain. Use a private Space in a team with nobody
-  else in it: everyone in the team that owns a Space can read all of it, and Check says so when
-  there's anyone.
+- **Set up** (Settings › Sharing): Sign In with Spacefast opens Spacefast's own sign-in page in
+  your browser; approve Oatcake there and you're back in Settings, signed in. Then choose a team
+  and press Create Oatcake Space, which makes a private Space called Oatcake in it, or pick a Space
+  the team already has and press Use This Space (on a second Mac, say). Oatcake makes a Space hold
+  your synced folders and nothing else, so a Space with anything else on it is the wrong one to
+  pick, and you're asked before it's used. Choose a team with nobody else in it: everyone in the team that owns a Space can read all of it, and Settings
+  says so when there's anyone. There's no key to make or paste. The sign-in is kept in your
+  Keychain and renewed as needed; Sign Out forgets it on this Mac (to end it on Spacefast too,
+  remove Oatcake under Account settings › Connected apps there).
 - **Sync a folder**: right-click it in the sidebar, Sync to Spacefast. Its meetings are published
   as pages, and again whenever something in it changes, without a press each time. A folder inside
   a synced folder syncs with it. Folders that aren't synced never leave the Mac.
 - **What's published**: each meeting's summary and to-dos, and its transcript only if the folder's
   Share sheet says so. Your own notes and the call audio never are. Pages are plain HTML made from
   the Markdown with everything escaped; only web links are links.
-- **Share a folder**: Share… on a synced folder, then a name and an email address. Spacefast emails
-  the person a link; they need no account, and can read that folder and everything inside it.
-  Nobody but you can read a synced folder until you add someone.
+- **Share a folder**: open a synced folder and the top of its list of meetings says who can view it,
+  with a field to add someone by email address (a folder that isn't synced has a Sync to Spacefast
+  button there instead). Share… on the folder does the same with names, removing someone and the
+  choice about transcripts. Because adding someone sends them an email, Oatcake asks first, and then
+  waits a few seconds in which Undo takes it back before anything is saved or sent. Spacefast
+  emails the person a link; they need no account, and can read that folder and everything inside
+  it. Nobody but you can read a synced folder until you add someone.
 - **Addresses** follow the folders, in plain lower-case words: `Clients/Acme Corp` is at
   `…/clients/acme-corp/`. Two folders that would get the same address stop the sync until one is
   renamed.
@@ -231,8 +242,18 @@ isn't there (a drive not connected) stops the sync rather than emptying the Spac
 earlier versions of a Space, which only its owner can reach, so a page removed from the live site
 isn't erased from Spacefast.
 
-Not built yet: signing in to Spacefast from the app rather than pasting a key, and choosing people
-from a meeting's attendees.
+Signing in works the way it does for any app with no secret of its own to keep (OAuth with PKCE):
+Oatcake is known to Spacefast by the address of a small public file,
+`https://a8cteam51.github.io/oatcake/oauth/client.json` (the `gh-pages` branch of this repository),
+and the browser hands the answer back to Oatcake on an address only this Mac can reach. If that
+file's address ever changes, everyone signs in again.
+
+What's synced and who it's shared with is kept on this Mac, not on Spacefast: a second Mac using
+the same Space starts with no folders synced and no readers, and its first sync leaves the Space
+with only what that Mac syncs.
+
+Not built yet: changing to another Space once one is chosen, and choosing people from a meeting's
+attendees.
 
 ## What's next
 
@@ -509,9 +530,9 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   own models: a server of yours decides for itself.
 - **Transcription model:** Parakeet English, or Parakeet Ultra for 25 European languages
   (`SpeechModels.asr`); FluidAudio runs other models too.
-- **Sharing** (Settings › Sharing): your Spacefast Space and its key, the folders that sync and who
-  each is shared with (kept in `sharing.json` beside `config.json`; the key in the Keychain). See
-  Sharing folders.
+- **Sharing** (Settings › Sharing): your Spacefast sign-in and Space, the folders that sync and who
+  each is shared with (kept in `sharing.json` beside `config.json`; the sign-in in the Keychain).
+  See Sharing folders.
 - **Keep call audio** (Settings › Storage): off by default; audio is deleted once a meeting is saved.
 - **Live transcript**, **Offer to record when a call starts**, **Stop recording when the call
   ends:** all on by default (Settings › General); see Record above.
@@ -552,7 +573,7 @@ Settings in the app (stored in `~/Library/Application Support/Oatcake/config.jso
   never records: the recorder app captures audio on its own.
 - Summaries and answers are drawn as Markdown with any HTML shown as text. Links in Ask's answers
   to anything but a meeting are shown as text, not made clickable.
-- Sharing sends a synced folder's pages to Spacefast, and nothing else, over HTTPS, with a key
+- Sharing sends a synced folder's pages to Spacefast, and nothing else, over HTTPS, with a sign-in
   that goes nowhere else. What's said on a call can't become markup or a link on a page: all of it
   is escaped. See Sharing folders for the order a sync works in.
 - Speech models are fetched from pinned commits (see Speech models).

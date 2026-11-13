@@ -8,7 +8,7 @@ import Security
 
 public enum SecretName: String, CaseIterable, Sendable {
     case calendar
-    /// The key Oatcake publishes shared folders to your Spacefast Space with.
+    /// Your sign-in to Spacefast, which Oatcake publishes shared folders with (see SpacefastSignIn).
     case spacefast
 
     /// One already in the environment when Oatcake started (e.g. from your shell) is the fallback.

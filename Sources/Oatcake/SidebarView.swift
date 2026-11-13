@@ -312,7 +312,6 @@ private struct FolderRow: View {
     @Binding var draft: String
     @Binding var newFolderIn: String?
     @Binding var dropTarget: String?
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         HStack(spacing: 4) {
@@ -333,7 +332,7 @@ private struct FolderRow: View {
             Label(node.name, systemImage: "folder").lineLimit(1)
             Spacer()
             // On your Space, and whether anyone but you can read it there.
-            if model.sharing.isSynced(node.path) {
+            if model.sharingSetUp, model.sharing.isSynced(node.path) {
                 let readers = model.sharing.readers(of: node.path).count
                 Image(systemName: readers == 0 ? "arrow.triangle.2.circlepath" : "person.2.fill")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
@@ -356,8 +355,9 @@ private struct FolderRow: View {
             Button("Rename…") { draft = node.name; renaming = node }
             Button("New Folder Inside…") { draft = ""; newFolderIn = node.path }
             Button("Show in Finder") { model.reveal(node.path) }
-            Divider()
+            // Only once sharing is set up (Settings › Sharing): without it this menu is as it always was.
             if model.sharingSetUp {
+                Divider()
                 // A folder inside a synced one syncs with it; that's turned off on the folder it comes from.
                 let above = model.sharing.syncedFolder(over: parentOf(node.path)).flatMap { node.path.contains("/") ? $0 : nil }
                 if let above {
@@ -366,11 +366,6 @@ private struct FolderRow: View {
                     Toggle("Sync to Spacefast", isOn: Binding(get: { model.sharing.folders[node.path] != nil }, set: { model.setFolderSynced(node.path, $0) }))
                 }
                 Button("Share…") { model.shareFolder(node.path) }.disabled(!model.sharing.isSynced(node.path))
-            } else {
-                Button("Set Up Sharing…") {
-                    UserDefaults.standard.set("sharing", forKey: "settingsPane")
-                    openSettings()
-                }
             }
             Divider()
             Button("Move to Trash") { model.trash([node]) }

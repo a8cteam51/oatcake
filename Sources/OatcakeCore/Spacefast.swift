@@ -1,40 +1,58 @@
 import CryptoKit
 import Foundation
 
-// Spacefast's API, as far as sharing needs it: publishing pages to one Space and saying who can
-// read which of them. Every request carries the key you gave Oatcake for that Space.
+// Spacefast's API, as far as sharing needs it: making your Space, publishing pages to it and saying
+// who can read which of them. Every request carries your sign-in (see SpacefastSignIn).
 
 public struct Spacefast: Sendable {
     public var space: String
-    var key: String
+    /// What each request is sent with: the sign-in, renewed if it has to be.
+    var token: @Sendable () async throws -> String
     var base: URL
 
-    public init(space: String, key: String, base: URL? = nil) {
+    /// As whoever is signed in. `space` is empty until there is one.
+    public init(space: String = "", session: SpacefastSession, base: URL? = nil) {
         self.space = space.trimmed
-        self.key = key.trimmed
-        self.base = base ?? Self.testServer ?? URL(string: "https://api.spacefast.com")!
+        token = { try await session.token() }
+        self.base = base ?? SpacefastAccount.api
     }
 
-    /// For trying sharing without Spacefast: OATCAKE_SPACEFAST_API names a stand-in on this Mac. Anywhere else is ignored.
+    /// With a key that's sent as it is.
+    public init(space: String, key: String, base: URL? = nil) {
+        self.space = space.trimmed
+        let key = key.trimmed
+        token = {
+            guard !key.isEmpty else { throw OatcakeError("Sign in to Spacefast in Settings › Sharing first.") }
+            return key
+        }
+        self.base = base ?? SpacefastAccount.api
+    }
+
+    /// For trying sharing without Spacefast: OATCAKE_SPACEFAST_API names a stand-in on this Mac (for signing in too). Anywhere else is ignored.
     static let testServer: URL? = ProcessInfo.processInfo.environment["OATCAKE_SPACEFAST_API"].flatMap(URL.init(string:)).flatMap {
         ["127.0.0.1", "localhost"].contains($0.host ?? "") ? $0 : nil
     }
 
-    public struct SpaceInfo: Equatable, Sendable {
+    public struct SpaceInfo: Equatable, Hashable, Identifiable, Sendable {
         public var id: String
         public var name: String
         /// Where its pages are served.
         public var address: String
     }
 
-    private func call(_ method: String, _ path: String, json: Any? = nil, body: Data? = nil, contentType: String? = nil) async throws -> Any? {
-        guard !space.isEmpty, !key.isEmpty else { throw OatcakeError("Set your Space and its key in Settings › Sharing first.") }
+    private func call(_ method: String, _ path: String, json: Any? = nil, body: Data? = nil, contentType: String? = nil, onSpace: Bool = true) async throws -> Any? {
+        try await send(method, path, json: json, body: body, contentType: contentType, onSpace: onSpace)?["data"]
+    }
+
+    /// The whole of Spacefast's answer: what was asked for is in "data", and a list says in "pagination" whether there's more.
+    private func send(_ method: String, _ path: String, json: Any? = nil, body: Data? = nil, contentType: String? = nil, onSpace: Bool = true) async throws -> [String: Any]? {
+        guard !onSpace || !space.isEmpty else { throw OatcakeError("Make your Oatcake Space in Settings › Sharing first.") }
         guard let url = URL(string: path, relativeTo: base) else { throw OatcakeError("That isn’t a valid Space.") }
-        // The key goes nowhere but Spacefast, and never in the clear (a test server on this Mac aside).
+        // The sign-in goes nowhere but Spacefast, and never in the clear (a test server on this Mac aside).
         guard url.scheme == "https" || ["127.0.0.1", "localhost"].contains(url.host ?? "") else { throw OatcakeError("Spacefast is only reached over HTTPS.") }
         var request = URLRequest(url: url, timeoutInterval: 120)
         request.httpMethod = method
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "authorization")
+        request.setValue("Bearer \(try await token())", forHTTPHeaderField: "authorization")
         request.setValue("Oatcake", forHTTPHeaderField: "user-agent")
         if let json {
             request.httpBody = try JSONSerialization.data(withJSONObject: json)
@@ -51,21 +69,63 @@ public struct Spacefast: Sendable {
             let problem = (parsed as? [String: Any]).map { $0["error"] as? [String: Any] ?? $0 }
             let message = problem?["message"] as? String ?? problem?["detail"] as? String ?? problem?["title"] as? String
             switch status {
-            case 401: throw OatcakeError("Spacefast didn’t accept the key. Check it in Settings › Sharing.")
-            case 403: throw OatcakeError("The key isn’t allowed to do that on this Space\(message.map { ": \($0)" } ?? ".")")
-            case 404: throw OatcakeError("Spacefast has no Space called “\(space)” that this key can reach.")
+            case 401: throw OatcakeError("Spacefast didn’t accept your sign-in. Sign out and in again in Settings › Sharing.")
+            case 403: throw OatcakeError("Your sign-in isn’t allowed to do that on Spacefast\(message.map { ": \($0)" } ?? ".")")
+            case 404 where onSpace: throw OatcakeError("Your Oatcake Space isn’t on Spacefast any more, or this sign-in can’t reach it.")
             default: throw OatcakeError("Spacefast returned \(status)\(message.map { ": \($0)" } ?? ".")")
             }
         }
-        return (parsed as? [String: Any])?["data"]
+        return parsed as? [String: Any]
     }
 
     private var spacePath: String { "/v1/spaces/" + (space.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? space) }
 
     public func info() async throws -> SpaceInfo {
-        let data = try await call("GET", spacePath) as? [String: Any] ?? [:]
-        return SpaceInfo(id: data["id"] as? String ?? space, name: data["title"] as? String ?? data["slug"] as? String ?? space,
-                         address: data["liveUrl"] as? String ?? "")
+        info(from: try await call("GET", spacePath) as? [String: Any] ?? [:])
+    }
+
+    private func info(from data: [String: Any]) -> SpaceInfo {
+        SpaceInfo(id: data["id"] as? String ?? space, name: data["title"] as? String ?? data["slug"] as? String ?? space,
+                  address: data["liveUrl"] as? String ?? "")
+    }
+
+    /// A team on Spacefast you can make a Space in.
+    public struct Team: Equatable, Identifiable, Hashable, Sendable {
+        public var id: String
+        public var name: String
+    }
+
+    /// The teams the sign-in can act for, as Spacefast lists them.
+    public func teams() async throws -> [Team] {
+        let list = try await call("GET", "/v1/teams?limit=100", onSpace: false) as? [[String: Any]] ?? []
+        return list.compactMap { team in
+            guard let id = team["id"] as? String else { return nil }
+            return Team(id: id, name: team["name"] as? String ?? team["slug"] as? String ?? id)
+        }
+    }
+
+    /// The Spaces a team already has, most recently changed first.
+    public func spaces(in team: String) async throws -> [SpaceInfo] {
+        let path = "/v1/teams/" + (team.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? team) + "/spaces?limit=100"
+        var found: [SpaceInfo] = []
+        var cursor: String?
+        // A page at a time, and no more than a thousand: nobody picks from a longer list.
+        for _ in 0..<10 {
+            let page = try await send("GET", path + (cursor.map { "&cursor=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? ""), onSpace: false)
+            for space in page?["data"] as? [[String: Any]] ?? [] where space["id"] is String { found.append(info(from: space)) }
+            cursor = (page?["pagination"] as? [String: Any])?["nextCursor"] as? String
+            if cursor == nil { break }
+        }
+        return found
+    }
+
+    /// Makes a Space called Oatcake in a team: private, and with no link that opens it.
+    public func createSpace(team: String) async throws -> SpaceInfo {
+        let made = try await call("POST", "/v1/spaces", json: ["teamId": team, "title": "Oatcake", "access": "private", "capabilities": ["optional_access"]], onSpace: false)
+        guard let space = (made as? [String: Any])?["space"] as? [String: Any], let id = space["id"] as? String, !id.isEmpty else {
+            throw OatcakeError("Spacefast didn’t say what Space it made.")
+        }
+        return info(from: space)
     }
 
     /// The team that owns the Space. Everyone in it can read all of the Space, whatever is set here.
@@ -90,7 +150,8 @@ public struct Spacefast: Sendable {
         list.compactMap { person in
             guard let id = person["id"] as? String, person["status"] as? String != "revoked" else { return nil }
             let grants = person["grants"] as? [[String: Any]] ?? []
-            let scopes = grants.filter { $0["revokedAt"] == nil || $0["revokedAt"] is NSNull }.compactMap { $0["scope"] as? String }
+            // Spacefast gives a folder's address back without its closing slash ("/clients" for "/clients/").
+            let scopes = grants.filter { $0["revokedAt"] == nil || $0["revokedAt"] is NSNull }.compactMap { $0["scope"] as? String }.map { $0.hasSuffix("/") ? $0 : $0 + "/" }
             return SharePerson(id: id, email: person["email"] as? String ?? "", scopes: scopes)
         }
     }
