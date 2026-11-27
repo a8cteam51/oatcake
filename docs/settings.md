@@ -168,12 +168,14 @@ model thinks a task through before it replies: slower, and not always better. Ch
 Oatcake's models in Settings › Models sets the switches to what suited it in Oatcake's tests:
 all off for Qwen3.5, Qwen3.6 and Gemma 4, which Oatcake chooses from to start with (they took
 minutes longer and wrote no better summaries with it on), and on for Qwen3 except for to-dos (see
-the notes on each task below, and [Language model](models.md#language-model)). With a server of
-yours they're shown but can't be changed, as it decides for itself, until you choose the
-**Reasoning switch** it takes in Settings › Models: **Ollama** (its `reasoning_effort`: `medium`
-to reason, `none` not to) or **llama.cpp** (the `enable_thinking` that Qwen's and Gemma 4's chat
-templates read, as Oatcake's own server uses). Then each switch is sent with its task's requests. A model that can't turn reasoning off (GPT-OSS on Ollama)
-keeps its lowest level; one on Ollama that can't reason at all is asked again without the switch.
+the notes on each task below, and [Language model](models.md#language-model)). Choosing a server
+of your own keeps the switches as they were. With a server of yours they're shown but can't be
+changed, as it decides for itself, until you choose the **Reasoning switch** it takes in Settings
+› Models: **Ollama** (its `reasoning_effort`: `medium` to reason, `none` not to) or **llama.cpp**
+(the `enable_thinking` that Qwen's and Gemma 4's chat templates read, as Oatcake's own server
+uses). Then each switch is sent with its task's requests. A model that can't turn reasoning off
+(GPT-OSS on Ollama) keeps its lowest level; one on Ollama that can't reason at all is asked again
+without the switch.
 **Leave it to the server**, the default, sends nothing about reasoning.
 
 - **Jargon:** names, products and acronyms, separated by commas. The model is told to spell them

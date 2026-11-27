@@ -97,9 +97,9 @@ to-do's, a citation in Ask, a search result), ⌘[ goes back to where you were a
 
 Everything is in the menus: File (New Folder, Refresh Calendars, Move to Trash), Edit (Find, Search
 Meetings, Ask About Your Meetings), View (the meeting's tabs, the To-dos page's Open, Done and All,
-and Bigger Text, Smaller Text and Actual Size for what you read and type), Go (Back, Forward, Home, To-dos, All Meetings), Meeting
-(everything in the open meeting's **⋯** menu), Recording (Record a Call…, Stop Recording…, Join Call,
-Show Live Notes) and Help, which opens these pages. [Keyboard shortcuts](keyboard-shortcuts.md)
+and Bigger Text, Smaller Text and Actual Size for what you read and type), Go (Back, Forward,
+Home, To-dos, All Meetings), Meeting (everything in the open meeting's **⋯** menu), Recording
+(Record a Call…, Stop Recording…, Join Call, Show Live Notes) and Help, which opens these pages. [Keyboard shortcuts](keyboard-shortcuts.md)
 lists the keys. Bigger Text (⌘+), Smaller Text (⌘-) and Actual Size (⌘0) change the size of
 summaries, transcripts (the meeting's, the live one and Who's who's), notes, answers, the meeting
 list, to-dos, times and section headings.
