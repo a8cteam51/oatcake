@@ -313,7 +313,8 @@ struct SidebarView: View {
         let events = Array(upcomingCalls(model.calendar.events, at: now).prefix(6))
         let next = events.first { $0.startDate > now }
         Section {
-            ForEach(events) { event in UpcomingRow(event: event, next: next, now: now) }
+            let timeWidth = upcomingTimeWidth(events, next: next, now: now, recording: model.recording)
+            ForEach(events) { event in UpcomingRow(event: event, next: next, now: now, timeWidth: timeWidth) }
             UpcomingNote(empty: events.isEmpty)
         } header: {
             HStack {
@@ -388,6 +389,8 @@ struct UpcomingRow: View {
     /// The next call to start, which counts down.
     let next: CalendarEvent?
     let now: Date
+    /// The time column's width: the widest thing it says in this list (`upcomingTimeWidth`).
+    let timeWidth: CGFloat
 
     var body: some View {
         let calendars = model.calendar.labels(for: event)
@@ -411,38 +414,53 @@ struct UpcomingRow: View {
 
     private func label(_ calendars: [CalendarController.Label]) -> some View {
         // Status and countdown sit in the time column, so they never cut the title short.
-        let e = event
-        let recording = model.recording.live?.eventId == e.id
-        let starting = model.recording.status.state != .recording
-        let minsToNext = next.map { Int(ceil($0.startDate.timeIntervalSince(now) / 60)) } ?? .max
-        let label: String
-        let color: AnyShapeStyle
-        var bold = true
-        if recording {
-            label = starting ? "Starting…" : "Recording"
-            color = starting ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red)
-            bold = !starting
-        } else if e == next && minsToNext <= 60 {
-            label = "in \(shortDuration(Double(minsToNext) * 60))"
-            color = AnyShapeStyle(.tint)
-        } else if e.startDate <= now {
-            label = "Now"
-            color = AnyShapeStyle(.tint)
-        } else {
-            label = Calendar.current.isDate(e.startDate, inSameDayAs: now) ? timeOfDay(e.startDate) : dayAndTime(e.startDate)
-            color = AnyShapeStyle(.secondary)
-            bold = false
-        }
+        let status = UpcomingStatus(event, next: next, now: now, recording: model.recording)
         return HStack(spacing: 6) {
-            // At least the column's width, and more for a 12-hour clock's "Thu 10:30 pm".
-            Text(label).font(.caption.weight(bold ? .semibold : .regular)).monospacedDigit()
-                .foregroundStyle(color).fixedSize().frame(minWidth: 62, alignment: .leading)
+            Text(status.text).font(.caption.weight(status.bold ? .semibold : .regular)).monospacedDigit()
+                .foregroundStyle(status.color).fixedSize().frame(minWidth: timeWidth, alignment: .leading)
             CalendarBadges(calendars: calendars)
-            Text(e.title).lineLimit(1)
+            Text(event.title).lineLimit(1)
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
     }
+}
+
+/// What a call's time column says: its time, or how soon it starts, or that it's on now or being recorded.
+struct UpcomingStatus {
+    let text: String
+    let color: AnyShapeStyle
+    let bold: Bool
+
+    @MainActor init(_ e: CalendarEvent, next: CalendarEvent?, now: Date, recording: RecordingController) {
+        let minsToNext = next.map { Int(ceil($0.startDate.timeIntervalSince(now) / 60)) } ?? .max
+        if recording.live?.eventId == e.id {
+            let starting = recording.status.state != .recording
+            (text, color, bold) = starting ? ("Starting…", AnyShapeStyle(.secondary), false) : ("Recording", AnyShapeStyle(.red), true)
+        } else if e == next && minsToNext <= 60 {
+            (text, color, bold) = ("in \(shortDuration(Double(minsToNext) * 60))", AnyShapeStyle(.tint), true)
+        } else if e.startDate <= now {
+            (text, color, bold) = ("Now", AnyShapeStyle(.tint), true)
+        } else {
+            let time = Calendar.current.isDate(e.startDate, inSameDayAs: now) ? timeOfDay(e.startDate) : dayAndTime(e.startDate)
+            (text, color, bold) = (time, AnyShapeStyle(.secondary), false)
+        }
+    }
+}
+
+/**
+ * The time column's width for a list of calls: as wide as the widest thing it says in that list, so
+ * the titles line up a small gap after the times. A fixed column wide enough for a 12-hour clock's
+ * "Thu 10:30 pm" left a wide gap after a 24-hour "10:00".
+ */
+@MainActor func upcomingTimeWidth(_ events: [CalendarEvent], next: CalendarEvent?, now: Date, recording: RecordingController) -> CGFloat {
+    let size = NSFont.preferredFont(forTextStyle: .caption1).pointSize
+    let widths = events.map { event in
+        let status = UpcomingStatus(event, next: next, now: now, recording: recording)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: status.bold ? .semibold : .regular)
+        return ceil((status.text as NSString).size(withAttributes: [.font: font]).width)
+    }
+    return widths.max() ?? 0
 }
 
 /// What Upcoming says when it has no calls to list, or can't be sure it has them all.
