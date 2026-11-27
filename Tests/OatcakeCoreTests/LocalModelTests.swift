@@ -358,9 +358,6 @@ import Testing
         // hand when written, on a small program that signed itself again on the disk.
     }
 
-    /// The model's server counts as started only once llama.cpp has said it's listening on the
-    /// port it was given: before then, whatever answers there may be another program's. The lines
-    /// are as the pinned build writes them.
     /// llama.cpp's server keeps no copies of earlier prompts: they'd take memory a model isn't given
     /// room for. A window past the model's own is stretched, and only then.
     @Test func serverArguments() throws {
@@ -375,6 +372,9 @@ import Testing
         #expect(!native.contains("--rope-scaling") && stretched.contains("--rope-scaling"))
     }
 
+    /// The model's server counts as started only once llama.cpp has said it's listening on the
+    /// port it was given: before then, whatever answers there may be another program's. The lines
+    /// are as the pinned build writes them.
     @Test func startedOnlyWhenLlamaListens() {
         let loaded = "srv  server_run_i: model loaded\n"
         #expect(!ModelServer.saysListening(loaded, port: 54321))
