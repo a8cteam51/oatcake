@@ -308,7 +308,9 @@ she/her/hers it writes is changed to they/them/their afterwards, with the verb a
 Tabs, in the toolbar over the meeting: Summary (with the meeting's to-dos at the top), Transcript
 and My notes (⌘1–⌘3), and Draft (⌘4) in a meeting that has a [draft for sharing](#draft-for-sharing), each
 laid out (**Read**) or as editable Markdown (**Edit**) from the switch at the top right of the tab (saved as you type;
-Summary shows `todo.md` and `summary.md`). If the file changes while you type (its summary
+Summary shows `todo.md` and `summary.md`). In **Read**, a summary or draft is one piece of text: a
+selection can run across its paragraphs, headings, lists and tables, and copies with its
+formatting. If the file changes while you type (its summary
 arrives, or it's edited in another app), Oatcake doesn't save over it: it shows the file as it is
 now and keeps what you typed beside it, as `summary (your version).md` and so on, and says so.
 Everything else that can be done to the meeting is in

@@ -1,6 +1,7 @@
-// Renders the Markdown that summaries and Ask answers come in: headings, paragraphs, lists, quotes,
-// code, tables and rules, with inline emphasis and links. Transcript times like [12:34] become links that
-// jump to that moment; links to meeting folders open the meeting. Raw HTML stays as text.
+// Markdown as summaries, drafts for sharing and Ask's answers come in, read into blocks (headings,
+// paragraphs, lists, quotes, code, tables and rules) with their inline emphasis and links, for
+// SelectableMarkdown to draw. Transcript times like [12:34] become links that jump to that moment;
+// links to meeting folders open the meeting. Raw HTML stays as text.
 
 import Foundation
 import OatcakeCore
@@ -8,75 +9,6 @@ import SwiftUI
 
 /// A link that jumps to a transcript time.
 let stampScheme = "oatcake-stamp"
-
-struct MarkdownView: View {
-    let markdown: String
-    var fontSize: CGFloat = 14
-    /// Words being looked for (Find, or the search a meeting was opened from), marked where they are.
-    var marks: [String] = []
-
-    var body: some View {
-        let blocks = markdownBlocks(markdown)
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                blockView(block)
-                    .padding(.top, index == 0 ? 0 : topSpacing(block, previous: blocks[index - 1]))
-            }
-        }
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func topSpacing(_ block: MarkdownBlock, previous: MarkdownBlock) -> CGFloat {
-        if case .heading = block.kind { return 18 }
-        if case .listItem = block.kind, case .listItem = previous.kind { return 3 }
-        return 10
-    }
-
-    @ViewBuilder private func blockView(_ block: MarkdownBlock) -> some View {
-        let text = markingFound(block.text, marks)
-        switch block.kind {
-        case .heading(let level):
-            Text(text).font(.system(size: level <= 2 ? fontSize + 2 : fontSize + 1, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
-        case .paragraph:
-            Text(text).font(.system(size: fontSize)).lineSpacing(fontSize * 0.3)
-        case .listItem(let marker, let depth):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(marker).font(.system(size: fontSize).monospacedDigit()).foregroundStyle(.secondary)
-                    .frame(minWidth: 12, alignment: .trailing)
-                Text(text).font(.system(size: fontSize)).lineSpacing(fontSize * 0.3)
-            }
-            .padding(.leading, CGFloat(depth) * 18)
-        case .quote:
-            Text(text).font(.system(size: fontSize)).foregroundStyle(.secondary)
-                .padding(.leading, 10)
-                // A rule, not an edge to click in: the light separator rather than Color.line.
-                .overlay(alignment: .leading) { Rectangle().fill(.separator).frame(width: 3) }
-        case .code:
-            Text(text).font(.system(size: fontSize - 1, design: .monospaced))
-                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.fill))
-        case .rule:
-            Divider()
-        case .table(let rows, let hasHeader):
-            // As wide as its content, like the bordered tables the Electron version drew.
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 0, verticalSpacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    if index > 0 { Divider().gridCellUnsizedAxes(.horizontal) }
-                    GridRow {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                            Text(markingFound(cell, marks)).font(.system(size: fontSize - 1, weight: hasHeader && index == 0 ? .semibold : .regular))
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                        }
-                    }
-                }
-            }
-            // As light as the rules between its rows.
-            .overlay { RoundedRectangle(cornerRadius: 4).stroke(.separator) }
-        }
-    }
-}
 
 struct MarkdownBlock {
     enum Kind {
