@@ -361,6 +361,20 @@ import Testing
     /// The model's server counts as started only once llama.cpp has said it's listening on the
     /// port it was given: before then, whatever answers there may be another program's. The lines
     /// are as the pinned build writes them.
+    /// llama.cpp's server keeps no copies of earlier prompts: they'd take memory a model isn't given
+    /// room for. A window past the model's own is stretched, and only then.
+    @Test func serverArguments() throws {
+        let model = try #require(LocalModels.find("qwen3-8b"))
+        let file = URL(fileURLWithPath: "/models/Qwen3-8B-Q4_K_M.gguf")
+        let native = ModelServer.arguments(model, file: file, port: 8080, context: 32_768)
+        let stretched = ModelServer.arguments(model, file: file, port: 8080, context: 65_536)
+        for arguments in [native, stretched] {
+            let cache = try #require(arguments.firstIndex(of: "--cache-ram"))
+            #expect(arguments[cache + 1] == "0" && arguments.contains(file.path))
+        }
+        #expect(!native.contains("--rope-scaling") && stretched.contains("--rope-scaling"))
+    }
+
     @Test func startedOnlyWhenLlamaListens() {
         let loaded = "srv  server_run_i: model loaded\n"
         #expect(!ModelServer.saysListening(loaded, port: 54321))
