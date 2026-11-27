@@ -12,7 +12,6 @@ None of this is built yet. It's what we'd like to add, in no fixed order.
 **During a call**
 
 - Ask while the call is still going.
-- Names beside the call side of the live transcript.
 - Pause and resume.
 - Meetings in a room: telling apart the voices on your microphone, as the call side is today.
 

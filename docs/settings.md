@@ -165,13 +165,17 @@ One section for each thing the model writes, each with its instructions and its 
 side by side. Instructions show as Oatcake's own or yours; **Edit…** opens them below (saved as
 you type), and **Restore default…** there brings Oatcake's own back. **Reasoning** is whether the
 model thinks a task through before it replies: slower, and not always better. Choosing one of
-Oatcake's models in Settings › Models sets the switches to what suited it in Oatcake's tests
-(Qwen3.5, Qwen3.6 and Gemma 4: all off; Qwen3: on except for to-dos). With a server of yours they're shown but can't be changed, as it
-decides for itself, until you choose the **Reasoning switch** it takes in Settings › Models:
-**Ollama** (its `reasoning_effort`: `medium` to reason, `none` not to) or **llama.cpp** (the
-`enable_thinking` that Qwen's and Gemma 4's chat templates read, as Oatcake's own server uses). Then each
-switch is sent with its task's requests. A model that can't turn reasoning off (GPT-OSS on Ollama)
-keeps its lowest level; one on Ollama that can't reason at all is asked again without the switch.
+Oatcake's models in Settings › Models sets the switches to what suited it in Oatcake's tests:
+all off for Qwen3.5, Qwen3.6 and Gemma 4, which Oatcake chooses from to start with (they took
+minutes longer and wrote no better summaries with it on), and on for Qwen3 except for to-dos (see
+the notes on each task below, and [Language model](models.md#language-model)). Choosing a server
+of your own keeps the switches as they were. With a server of yours they're shown but can't be
+changed, as it decides for itself, until you choose the **Reasoning switch** it takes in Settings
+› Models: **Ollama** (its `reasoning_effort`: `medium` to reason, `none` not to) or **llama.cpp**
+(the `enable_thinking` that Qwen's and Gemma 4's chat templates read, as Oatcake's own server
+uses). Then each switch is sent with its task's requests. A model that can't turn reasoning off
+(GPT-OSS on Ollama) keeps its lowest level; one on Ollama that can't reason at all is asked again
+without the switch.
 **Leave it to the server**, the default, sends nothing about reasoning.
 
 - **Jargon:** names, products and acronyms, separated by commas. The model is told to spell them
@@ -179,7 +183,8 @@ keeps its lowest level; one on Ollama that can't reason at all is asked again wi
   what the speech model heard.
 - **Summary:** what the model is told to write once it has read the transcript. Change the
   headings, the level of detail or the language to suit you. To-dos are collected separately and
-  aren't affected. Reasoning starts on: decisions went to the right person more reliably with it.
+  aren't affected. With Qwen3, reasoning starts on: decisions went to the right person more
+  reliably with it.
 - **Summary templates:** other summary instructions, each with a name, for the meetings that need a
   different summary (a one-to-one you lead, one with your own lead, a team meeting). **Add
   Template** starts one as a copy of the summary instructions; change its name and instructions in
@@ -195,14 +200,16 @@ keeps its lowest level; one on Ollama that can't reason at all is asked again wi
   own keep it to what somebody said they'd do after the call, and leave out what was only
   discussed, what was asked and not taken on, what was done during the call, and small talk. Make
   it stricter or looser, or keep it to your own action items. The shape of each to-do (task,
-  owner, due date, time) isn't part of it. Reasoning starts off: to-dos lost detail with it.
+  owner, due date, time) isn't part of it. Reasoning starts off with every model: with Qwen3,
+  to-dos lost detail with it.
 - **Draft for sharing:** what the model is told when it writes a meeting's
   [draft for sharing](how-it-works.md#draft-for-sharing) from its summary and to-dos. Oatcake's
   own ask for an update for people who weren't there: decisions and next steps first, short
-  bullet points, nothing the notes don't say. Reasoning starts on, as for summaries (not measured
-  for drafts).
-- **Reasoning for name suggestions and Ask:** both start on: names were made up less often, and
-  answers kept to the question.
+  bullet points, nothing the notes don't say. Reasoning starts as it does for summaries (not
+  measured for drafts).
+- **Reasoning for name suggestions and Ask:** with Qwen3 both start on: names were made up less
+  often, and answers kept to the question. With Qwen3.5 4B and reasoning off, voices are left for
+  you to name rather than given a suggested name.
 
 ## Storage
 
