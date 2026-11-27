@@ -230,14 +230,29 @@ private struct ToolbarDim: NSViewRepresentable {
         }
         required init?(coder: NSCoder) { nil }
 
+        private var watching: [NSObjectProtocol] = []
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            // Leaving the window (search closed) stops the watching, as well as moving to another.
+            watching.forEach(NotificationCenter.default.removeObserver)
+            watching = []
             // The window's frame view holds both the content and the toolbar above it.
             guard let window, let frame = window.contentView?.superview else { return dim.removeFromSuperview() }
+            frame.addSubview(dim, positioned: .above, relativeTo: nil)
+            place()
+            // The toolbar's height changes in full screen, where it leaves the window.
+            for name in [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                watching.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.place() }
+                })
+            }
+        }
+
+        private func place() {
+            guard let window, let frame = dim.superview else { return }
             let toolbar = window.frame.height - window.contentLayoutRect.maxY
             dim.frame = NSRect(x: 0, y: frame.bounds.height - toolbar, width: frame.bounds.width, height: toolbar)
-            dim.autoresizingMask = [.width, .minYMargin]
-            frame.addSubview(dim, positioned: .above, relativeTo: nil)
         }
     }
 
@@ -256,5 +271,12 @@ private struct ToolbarDim: NSViewRepresentable {
         override var wantsUpdateLayer: Bool { true }
         override func updateLayer() { layer?.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor }
         override func mouseDown(with event: NSEvent) { onClick() }
+
+        /// The window's close, minimise and zoom buttons still take their clicks, dimmed or not.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            if let buttons = window?.standardWindowButton(.closeButton)?.superview, let superview,
+               buttons.convert(buttons.bounds, to: superview).contains(point) { return nil }
+            return super.hitTest(point)
+        }
     }
 }
