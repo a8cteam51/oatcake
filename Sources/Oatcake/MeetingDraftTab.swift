@@ -39,7 +39,7 @@ extension MeetingView {
         let text = files[.draft] ?? ""
         return Group {
             if !text.trimmed.isEmpty {
-                MarkdownView(markdown: text, fontSize: 14 * scale, marks: findWords)
+                SelectableMarkdown(markdown: text, fontSize: 14 * scale, marks: findWords, label: "Draft for sharing")
             } else if !model.jobs.drafting.contains(path) && model.jobs.draftErrors[path] == nil {
                 Text("No draft for sharing in this meeting.").foregroundStyle(.secondary)
             }

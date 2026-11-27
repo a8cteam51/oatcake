@@ -22,7 +22,7 @@ extension MeetingView {
             } else if summary.trimmed.isEmpty {
                 Text("No summary for this meeting.").foregroundStyle(.secondary)
             } else {
-                MarkdownView(markdown: summary, fontSize: 14 * scale, marks: findWords)
+                SelectableMarkdown(markdown: summary, fontSize: 14 * scale, marks: findWords, label: "Summary")
             }
         }
     }
