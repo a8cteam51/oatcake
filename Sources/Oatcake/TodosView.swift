@@ -45,6 +45,9 @@ struct TodosView: View {
     /// A list's text straight after a tick or an add here, until the app has read it back from disk,
     /// so two quick ticks in one meeting don't undo each other.
     @ViewState private var local: [String: String] = [:]
+    /// To-dos just ticked here, by item ID. Where only open ones are listed (Open, and Home), each
+    /// stays a moment so its tick and line can be seen before it leaves.
+    @ViewState private var justTicked: Set<String> = []
     @FocusState private var addFocused: Bool
     @AppStorage(TextScale.key) private var textScale = 1.0
 
@@ -75,7 +78,7 @@ struct TodosView: View {
 
     @ViewBuilder private func preview(_ items: [TodoItem], today: Date, myName: String) -> some View {
         let open = items.filter { !$0.todo.done }
-        let list = open.sorted(by: dueFirst).prefix(5)
+        let list = items.filter { !$0.todo.done || justTicked.contains($0.id) }.sorted(by: dueFirst).prefix(5)
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("To-dos").font(.title2.bold()).accessibilityAddTraits(.isHeader)
@@ -110,8 +113,9 @@ struct TodosView: View {
     private func fullPage(_ items: [TodoItem], today: Date, myName: String) -> some View {
         let open = items.filter { !$0.todo.done }
         let overdue = items.filter { $0.isOverdue(today: today) }
-        // One ticked in Open leaves the list at once. It's under Done, where a mis-tick can be undone.
-        var list = items.filter { status == .open ? !$0.todo.done : status == .done ? $0.todo.done : true }
+        // One ticked in Open leaves the list once its tick has been seen. It's under Done, where a
+        // mis-tick can be undone.
+        var list = items.filter { status == .open ? !$0.todo.done || justTicked.contains($0.id) : status == .done ? $0.todo.done : true }
         switch owner {
         case .everyone: break
         case .mine: list = list.filter { isMe($0.todo.owner, myName) }
@@ -204,7 +208,8 @@ struct TodosView: View {
                 if isMe(t.todo.owner, myName) { return ("0", "You") }
                 return t.todo.owner.isEmpty ? ("2", "No owner") : ("1" + t.todo.owner, t.todo.owner)
             case .due:
-                let group = t.dueGroup(today: today)
+                // One just ticked in Open stays in its group (Overdue, say) until it leaves.
+                let group = (justTicked.contains(t.id) && status == .open ? with(t) { $0.todo.done = false } : t).dueGroup(today: today)
                 return ("\(group.rawValue)", group.title)
             }
         }
@@ -351,6 +356,13 @@ struct TodosView: View {
 
     private func tick(_ item: TodoItem) {
         let path = item.meeting.path
+        if !item.todo.done {
+            justTicked.insert(item.id)
+            Task {
+                try? await Task.sleep(for: .milliseconds(900))
+                _ = withAnimation { justTicked.remove(item.id) }
+            }
+        }
         model.library.tick(path, item.todo, undo: undoManager) { [local = $local] text in
             // nil: nothing was ticked, and the list is read again.
             withAnimation { local.wrappedValue[path] = text }
@@ -388,6 +400,7 @@ struct TodoRow<Caption: View, Trailing: View>: View {
     let tick: () -> Void
     @ViewBuilder var caption: Caption
     @ViewBuilder var trailing: Trailing
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(alignment: alignment, spacing: 10) {
@@ -395,11 +408,43 @@ struct TodoRow<Caption: View, Trailing: View>: View {
                 .padding(.top, alignment == .top ? 1 : 0)
             VStack(alignment: .leading, spacing: 3) {
                 Text(task ?? AttributedString(todo.text))
-                    .strikethrough(todo.done).foregroundStyle(todo.done ? .secondary : .primary).textSelection(.enabled)
+                    .textRenderer(StruckThrough(progress: todo.done ? 1 : 0))
+                    .foregroundStyle(todo.done ? .secondary : .primary).textSelection(.enabled)
+                    // Ticked, the line is drawn through it from the start of the task to the end,
+                    // line by line, as the text greys. With Reduce motion it's there at once.
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: todo.done)
                 caption.font(.caption)
             }
             Spacer(minLength: 8)
             trailing
+        }
+    }
+}
+
+/**
+ * A done to-do's line through its text, drawn as far as `progress` along it: across the first
+ * line, then the next, so a task that wraps is struck through one line after another as it's
+ * ticked. SwiftUI's own strikethrough can only be there or not.
+ */
+struct StruckThrough: TextRenderer, Animatable {
+    var progress: Double
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        for line in layout { context.draw(line) }
+        guard progress > 0 else { return }
+        let lines = layout.map(\.typographicBounds)
+        var left = lines.reduce(0) { $0 + $1.width } * min(progress, 1)
+        for bounds in lines where left > 0 {
+            let width = min(bounds.width, left)
+            left -= width
+            // Where a strikethrough runs: through the middle of the lower-case letters.
+            let y = bounds.origin.y - bounds.ascent * 0.3
+            context.fill(Path(CGRect(x: bounds.origin.x, y: y - 0.5, width: width, height: 1)), with: .foreground)
         }
     }
 }
