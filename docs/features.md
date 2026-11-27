@@ -60,8 +60,8 @@ Everything Oatcake does today, with a link to where each is described. Planned w
 ## Transcription and voices
 
 - Transcription on the Mac's Neural Engine, in English, 25 European languages, or Chinese,
-  Cantonese, Japanese and Korean.
-  [Process](how-it-works.md#2-process), [Speech models](models.md#speech-models)
+  Cantonese, Japanese and Korean, and an English model that leaves out "um", false starts and
+  repeated words. [Process](how-it-works.md#2-process), [Speech models](models.md#speech-models)
 - The call side split into voices, with your microphone's echo of the call dropped.
   [Process](how-it-works.md#2-process)
 - Voices recognised from earlier calls by their fingerprints, and names suggested from the
@@ -101,16 +101,25 @@ Everything Oatcake does today, with a link to where each is described. Planned w
   [To-dos](how-it-works.md#to-dos)
 - To-dos can be turned off altogether. [General](settings.md#general)
 - Qwen3.6 35B-A3B or Qwen3.5 4B, by this Mac's memory (or Google's Gemma 4 26B-A4B or 12B
-  instead; Qwen3 8B and 4B are still there for those who chose them), downloaded and run by Oatcake, or a model server of your own on your Mac or
-  network, sent as much at once as its context holds. [Language model](models.md#language-model)
+  instead; Qwen3 8B and 4B are still there for those who chose them), downloaded and run by
+  Oatcake, or a model server of your own on your Mac or network, sent as much at once as its
+  context holds. Choosing a model sets the reasoning switches that suited it, and says which
+  changed. [Language model](models.md#language-model)
 
 ## Meetings
 
+- Home: upcoming calls with **Join the call**, your next open to-dos to tick off or add to, and
+  Ask across every meeting. [The window](how-it-works.md#the-window)
+- A window laid out as Mail's: the sidebar, a folder's meetings and the meeting, or the sidebar
+  and one screen for Home, To-dos, recording and Who's who. It narrows to about half a laptop's
+  screen, the sidebar making way for the meeting. [The window](how-it-works.md#the-window)
 - Each meeting a folder of Markdown (`summary.md`, `todo.md`, `transcript.md`, `notes.md`) and
   `meeting.json` in a Meetings folder you choose, kept in step with Finder.
   [Save](how-it-works.md#4-save)
 - Summary, Transcript and My notes tabs (and Draft where there's a draft for sharing), each to read
-  laid out or to edit as Markdown.
+  laid out or to edit as Markdown. An edit never saves over a file that changed meanwhile (a
+  summary arriving, another app): yours is kept beside it. Quitting asks first when work is under
+  way or something you typed couldn't be saved.
   [Reading and editing](how-it-works.md#reading-and-editing)
 - Play and pause a saved call recording, and jump to a time from the slider or the transcript.
   [Listening to the recording](how-it-works.md#listening-to-the-recording)
@@ -121,7 +130,8 @@ Everything Oatcake does today, with a link to where each is described. Planned w
   its summary as text. [Organising meetings](how-it-works.md#organising-meetings)
 - Search across every meeting, with its words and results kept for the next look, and find on the
   tab you're reading. [The window](how-it-works.md#the-window)
-- Bigger and smaller text. [The window](how-it-works.md#the-window)
+- Bigger and smaller text, and dates and times written the way your Mac's region writes them.
+  [The window](how-it-works.md#the-window)
 - Every command in the menu bar, with keys for what's done on every call, and Back and Forward
   after following a link. [Keyboard shortcuts](keyboard-shortcuts.md)
 - Oatcake opens on the folder, meeting and tab it was on when it was last closed.

@@ -20,7 +20,8 @@ speaker separation on a known meeting.
 
 ## Language model
 
-Summaries, to-dos, name suggestions and Ask's answers come from one model, run on this Mac:
+Summaries, to-dos, drafts for sharing, name suggestions and Ask's answers come from one model, run
+on this Mac:
 Alibaba's Qwen or Google's Gemma. Each one's description in Settings › Models says, in a few
 words, how it did in the tests below.
 

@@ -96,8 +96,8 @@ on the transcript, ⌘G and ⇧⌘G step through the lines with every word. Afte
 to-do's, a citation in Ask, a search result), ⌘[ goes back to where you were and ⌘] forward again.
 
 Everything is in the menus: File (New Folder, Refresh Calendars, Move to Trash), Edit (Find, Search
-Meetings, Ask About Your Meetings), View (the meeting's tabs, and Bigger Text, Smaller Text and
-Actual Size for what you read and type), Go (Back, Forward, Home, To-dos, All Meetings), Meeting
+Meetings, Ask About Your Meetings), View (the meeting's tabs, the To-dos page's Open, Done and All,
+and Bigger Text, Smaller Text and Actual Size for what you read and type), Go (Back, Forward, Home, To-dos, All Meetings), Meeting
 (everything in the open meeting's **⋯** menu), Recording (Record a Call…, Stop Recording…, Join Call,
 Show Live Notes) and Help, which opens these pages. [Keyboard shortcuts](keyboard-shortcuts.md)
 lists the keys. Bigger Text (⌘+), Smaller Text (⌘-) and Actual Size (⌘0) change the size of
@@ -235,7 +235,7 @@ stops the analysis, rather than counting as silence. Mic lines that repeat the c
 dropped. Voices you named in the live transcript get those names (a voice takes the name given to
 the lines it said most of); known voices are recognised from saved voiceprints; other names are
 suggested from the conversation by the summary model, quoting the words that gave it away (not when
-After a call is set to save the transcript only: see
+**After a call** is set to save the transcript only: see
 [Saving without Who's who](#saving-without-whos-who)). The recording waits under
 Who's who, transcribing, with its step (1–5), and the Dock icon's badge counts the recordings waiting there.
 When one is ready for Who's who and Oatcake isn't in front, a notification says so. A
@@ -342,14 +342,14 @@ and stays if it fails or is changed somewhere else meanwhile.
 
 ### Draft for sharing
 
-**Draft for Sharing…** in the **⋯** menu on the Summary tab has the model write the meeting's
+**Draft for Sharing…** (⇧⌘D) in the **⋯** menu on the Summary tab has the model write the meeting's
 summary and
 to-dos again for other people to read, following your
 [draft for sharing instructions](settings.md#summaries), plus anything you ask for that draft alone
 ("shorter, and leave out the budget"). It's given the summary and to-dos as they are, with your
 edits, and nothing else: not the transcript and not your notes, so it can't bring back anything
-you took out of the summary. The draft goes in the meeting's `draft.md` and opens in a **Draft for
-Sharing** tab (⌘4), which only meetings with a draft have; edit it there, then **Copy** or
+you took out of the summary. The draft goes in the meeting's `draft.md` and opens in a **Draft** tab
+(⌘4), which only meetings with a draft have; edit it there, then **Copy** or
 **Share** it. Asking again replaces the draft, edits included, and says so first; the old draft
 stays until the new one is ready, and stays if it fails or is edited meanwhile. Renaming speakers
 renames them in the draft too.
