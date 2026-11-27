@@ -72,7 +72,10 @@ extension SettingsView {
     private func reasoningToggle(_ task: WritableKeyPath<LlmConfig.Reasoning, Bool>, title: String = "Reasoning") -> some View {
         let undecided = LocalModels.find(model.config.llm.model) == nil && model.config.llm.own.reasoningControl == nil
         let reasoning: WritableKeyPath<LlmConfig, LlmConfig.Reasoning> = \.reasoning
-        return Toggle(isOn: bindLlm(reasoning.appending(path: task))) {
+        let saved = bindLlm(reasoning.appending(path: task))
+        // A switch changed here makes Settings › Models' note on what choosing a model changed out of date.
+        let isOn = Binding(get: { saved.wrappedValue }, set: { saved.wrappedValue = $0; reasoningNote = nil })
+        return Toggle(isOn: isOn) {
             Text(title)
             Text(undecided ? "A model server of your own decides this for itself, until you choose its reasoning switch in Settings › Models."
                  : "The model thinks it through before replying, which is slower. Choosing one of Oatcake’s models in Settings › Models sets this to what suits it.")
