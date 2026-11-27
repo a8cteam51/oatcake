@@ -42,6 +42,7 @@ struct HomeView: View {
                 let now = model.calendar.now
                 let events = upcomingCalls(model.calendar.events, at: now)
                 let next = events.first { $0.startDate > now }
+                let timeWidth = upcomingTimeWidth(events, next: next, now: now, recording: model.recording)
                 UpcomingNote(empty: events.isEmpty)
                 if !events.isEmpty {
                     // The sidebar's rows, with room beside them to join the call under way or the next one.
@@ -49,7 +50,7 @@ struct HomeView: View {
                         ForEach(events) { event in
                             if event.id != events.first?.id { Divider() }
                             HStack(spacing: 12) {
-                                UpcomingRow(event: event, next: next, now: now)
+                                UpcomingRow(event: event, next: next, now: now, timeWidth: timeWidth)
                                 if event.startDate <= now || event.id == next?.id, let link = event.callLink, let url = URL(string: link) {
                                     Button { NSWorkspace.shared.open(url) } label: {
                                         Label("Join the call", systemImage: "video")
