@@ -16,9 +16,9 @@ flowchart TD
         prints[("voiceprints.json")]
     end
 
-    guess["Qwen3, on this Mac: suggests names for voices<br/>with no match, from the transcript"]
+    guess["Qwen, on this Mac: suggests names for voices<br/>with no match, from the transcript"]
     review["3 · Review (you)<br/>listen to clips, confirm names,<br/>merge, mark mixed or leave out"]
-    summary["Qwen3, on this Mac: writes the summary and to-dos<br/>from the transcript, focused by your notes"]
+    summary["Qwen, on this Mac: writes the summary and to-dos<br/>from the transcript, focused by your notes"]
     folder["4 · Meeting folder<br/>summary.md · todo.md · transcript.md · notes.md · meeting.json"]
 
     mic --> asr
@@ -46,7 +46,7 @@ Bark or SenseVoice you choose instead), pyannote and WeSpeaker are small speech 
 is 0.6B parameters), run on the Neural Engine
 through [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML builds: they turn
 audio into text and voices into fingerprints, take no prompts, and can't write anything else. The
-two orange steps are the only language model: Qwen3, which Oatcake downloads once and runs itself
+two orange steps are the only language model: one of Qwen's, which Oatcake downloads once and runs itself
 with [llama.cpp](https://github.com/ggml-org/llama.cpp) (see [Language model](models.md#language-model)). It only ever sees
 text (the transcript and your notes), never audio. You can point Oatcake at a model server of
 your own, on your Mac or your network, instead.

@@ -66,6 +66,17 @@ import Testing
         let set = try read(#"{"model":"qwen3-8b","reasoning":{"todos":true,"ask":false}}"#)
         #expect(set.reasoning.summary && set.reasoning.todos && set.reasoning.names && !set.reasoning.ask)
         #expect(try JSONDecoder().decode(LlmConfig.self, from: JSONEncoder().encode(set)) == set)
+        // Each of Oatcake's models starts with its own switches; a server of your own with Qwen3's.
+        let off = LlmConfig.Reasoning(summary: false, todos: false, names: false, ask: false, sharing: false)
+        #expect(try read(#"{"model":"qwen3.6-35b-a3b"}"#).reasoning == off && LlmConfig(model: "qwen3.5-4b").reasoning == off)
+        #expect(LlmConfig(model: "qwen3-4b").reasoning == LlmConfig.Reasoning() && LlmConfig(model: LlmConfig.ownServer).reasoning == LlmConfig.Reasoning())
+        #expect(try read(#"{"model":"qwen3.6-35b-a3b","reasoning":{"summary":true}}"#).reasoning.summary)
+        // What Settings says changed when a model brings its own switches.
+        #expect(LlmConfig.Reasoning().change(to: off) == "off for summaries, drafts for sharing, name suggestions and Ask")
+        #expect(off.change(to: LlmConfig.Reasoning()) == "on for summaries, drafts for sharing, name suggestions and Ask")
+        #expect(set.reasoning.change(to: off) == "off for summaries, to-dos, drafts for sharing and name suggestions")
+        #expect(with(off) { $0.todos = true }.change(to: with(off) { $0.ask = true }) == "on for Ask, and off for to-dos")
+        #expect(off.change(to: off) == nil)
         // The summary's instructions are Oatcake's own until you write yours.
         var config = Config.defaults()
         #expect(config.summaryTask == defaultSummaryInstructions)

@@ -66,8 +66,9 @@ public struct LocalChat: Sendable {
     public var model: String
     /// The key Oatcake made up for its own server. None is sent to a server of yours.
     var key: String?
-    /// Oatcake's own server runs Qwen3, which takes its reasoning switch from the chat template.
-    var qwen = false
+    /// Oatcake's own models: the sampling their makers recommend with reasoning on and off. They all
+    /// take their reasoning switch from the chat template.
+    var sampling: (thinking: Sampling, direct: Sampling)?
     /// A server of your own's reasoning switch, if you've said which it takes (Settings › Models).
     var reasoningControl: LlmConfig.ReasoningControl?
 
@@ -82,11 +83,11 @@ public struct LocalChat: Sendable {
         reasoningControl = own.reasoningControl
     }
 
-    init(baseUrl: String, model: String, key: String?, qwen: Bool) {
+    init(baseUrl: String, model: String, key: String?, sampling: (thinking: Sampling, direct: Sampling)) {
         self.baseUrl = baseUrl
         self.model = model
         self.key = key
-        self.qwen = qwen
+        self.sampling = sampling
     }
 
     private func request(_ path: String, timeout: TimeInterval) throws -> URLRequest {
@@ -125,15 +126,16 @@ public struct LocalChat: Sendable {
             // The server keeps its reading of a prompt, so a second question about the same call starts at once.
             "cache_prompt": true,
         ]
-        // Qwen3's recommended sampling: thinking and non-thinking modes each have their own. A server
-        // of your own keeps to its own sampling, which suits whatever model it runs. Qwen3 takes its
-        // reasoning switch from the chat template.
-        if qwen {
-            body["temperature"] = think ? 0.6 : 0.7
-            body["top_p"] = think ? 0.95 : 0.8
+        // The model's makers' sampling: thinking and non-thinking modes each have their own. A server
+        // of your own keeps to its own sampling, which suits whatever model it runs. Oatcake's own
+        // models take their reasoning switch from the chat template.
+        if let sampling {
+            let chosen = think ? sampling.thinking : sampling.direct
+            body["temperature"] = chosen.temperature
+            body["top_p"] = chosen.topP
             body["top_k"] = 20
             body["min_p"] = 0
-            body["presence_penalty"] = 1.5
+            body["presence_penalty"] = chosen.presencePenalty
             body["chat_template_kwargs"] = ["enable_thinking": think]
         }
         // A server of your own is told only in the way you've said it understands. "medium" is a level

@@ -345,6 +345,10 @@ private func notesMarkdown(_ notes: [Note]) -> String {
 /// Room kept for the model's reasoning and its reply.
 let replyTokens = 8_192
 
+/// Room for one request's reasoning and reply with the model that's set: its own, or replyTokens for
+/// a server of your own.
+func replyRoom(_ llm: LlmConfig) -> Int { LocalModels.find(llm.model)?.replyTokens ?? replyTokens }
+
 private let notesSystem = "You write meeting notes from a call's transcript. Use only what the transcript and the note-taker's own notes say. Name who said or decided what."
 
 /// What the model is told when it writes a summary, after it has been given the transcript. It can
@@ -402,7 +406,8 @@ private func summarise(_ config: Config, title: String, participants: [String], 
     let system = ChatMessage("system", notesSystem)
     let todosTask = config.todosTask
     let reasoning = config.llm.reasoning
-    let overhead = LocalModels.tokens(in: head + summaryTask + todosTask) + replyTokens + 200
+    let room = replyRoom(config.llm)
+    let overhead = LocalModels.tokens(in: head + summaryTask + todosTask) + room + 200
     let parts = splitTranscript(transcript, tokens: max(2_000, largestContext(config.llm) - overhead))
 
     var summaries: [String] = []
@@ -415,10 +420,10 @@ private func summarise(_ config: Config, title: String, participants: [String], 
             // Regenerate asks only for the part being written again.
             var summary = "", items: [String]? = []
             if only != .todos {
-                summary = summaryBody(try await model.complete([system, ChatMessage("user", prompt + summaryTask)], think: reasoning.summary, maxTokens: replyTokens))
+                summary = summaryBody(try await model.complete([system, ChatMessage("user", prompt + summaryTask)], think: reasoning.summary, maxTokens: room))
             }
             if only != .summary {
-                items = todoLines(try await model.complete([system, ChatMessage("user", prompt + todosTask)], schema: todosSchema, think: reasoning.todos, maxTokens: replyTokens))
+                items = todoLines(try await model.complete([system, ChatMessage("user", prompt + todosTask)], schema: todosSchema, think: reasoning.todos, maxTokens: room))
             }
             return (summary, items)
         }
@@ -430,8 +435,8 @@ private func summarise(_ config: Config, title: String, participants: [String], 
     if summaries.count > 1, only != .todos {
         let joined = summaries.enumerated().map { "Notes on part \($0 + 1) of \(summaries.count):\n\($1)" }.joined(separator: "\n\n")
         let prompt = "\(head)\n\nThe meeting was long, so notes were written on each part of it in turn. Here they are, in order.\n\n\(joined)\n\n\(mergeTask)\n\(summaryTask)"
-        summary = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + replyTokens) { model, _ in
-            summaryBody(try await model.complete([system, ChatMessage("user", prompt)], think: reasoning.summary, maxTokens: replyTokens))
+        summary = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + room) { model, _ in
+            summaryBody(try await model.complete([system, ChatMessage("user", prompt)], think: reasoning.summary, maxTokens: room))
         }
     }
     // Everyone is they/them: a he or she from the model is a guess from a name (theyThem).

@@ -92,7 +92,8 @@ From FluidInference's Core ML conversions on Hugging Face:
 - pyannote speaker-diarization-community-1 (segmentation and WeSpeaker-based embedding): CC-BY-4.0
 - Silero VAD: MIT
 
-From Qwen's own GGUF files on Hugging Face (Qwen/Qwen3-8B-GGUF and Qwen/Qwen3-4B-GGUF, Q4_K_M), at the
-revisions named in `Sources/OatcakeCore/LocalModel.swift`:
+From llama.cpp's own GGUF conversions of Qwen's models on Hugging Face (ggml-org/Qwen3.6-35B-A3B-GGUF
+and ggml-org/Qwen3.5-4B-GGUF, Q4_K_M), and Qwen's own GGUF files (Qwen/Qwen3-8B-GGUF and
+Qwen/Qwen3-4B-GGUF, Q4_K_M), at the revisions named in `Sources/OatcakeCore/LocalModel.swift`:
 
-- Qwen3 8B and Qwen3 4B, the language model: Apache-2.0
+- Qwen3.6 35B-A3B, Qwen3.5 4B, Qwen3 8B and Qwen3 4B, the language model: Apache-2.0

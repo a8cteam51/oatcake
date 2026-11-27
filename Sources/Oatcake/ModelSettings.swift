@@ -25,13 +25,17 @@ extension SettingsView {
     @ViewBuilder var llmSection: some View {
         let llm = model.config.llm
         Section {
-            Picker("Language model", selection: bindLlm(\.model)) {
+            Picker("Language model", selection: Binding(get: { llm.model }, set: choose)) {
                 ForEach(LocalModels.all) { choice in
                     VStack(alignment: .leading) {
-                        Text(choice.title + (choice == LocalModels.recommended() ? " · recommended for this Mac" : ""))
+                        Text(choice.title + (choice == LocalModels.recommended() ? " · recommended for this Mac" : choice.legacy ? " · older model" : ""))
                         Text(choice.detail).settingsHint()
                         if !LocalModels.fits(choice) {
                             Text("This Mac has \(Int(LocalModels.physicalMemory.rounded())) GB of memory, which is too little for it.").settingsHint(.amber)
+                        }
+                        // Beside the choice that was just made, where it's seen.
+                        if choice.id == llm.model, let reasoningNote {
+                            Text("\(Image(systemName: "info.circle")) \(reasoningNote)").settingsHint(.primary)
                         }
                     }
                     .tag(choice.id)
@@ -97,6 +101,27 @@ extension SettingsView {
             }
             TestRow(missing: testBlocker(llm)).id(llm.model)
         }
+    }
+
+    /**
+     * One of Oatcake's models comes with the reasoning switches that suited it in Oatcake's tests,
+     * which replace the ones set before: Settings says which changed. A server of your own keeps
+     * the switches as they are.
+     */
+    private func choose(_ id: String) {
+        let before = model.config.llm
+        guard id != before.model else { return }
+        let chosen = LocalModels.find(id)
+        model.saveConfig(with(model.config) {
+            $0.llm.model = id
+            if let chosen { $0.llm.reasoning = chosen.reasoning }
+        })
+        reasoningNote = chosen.flatMap { chosen in
+            before.reasoning.change(to: chosen.reasoning).map {
+                "Reasoning is now \($0), which suits \(chosen.title) best. You can change it in Settings › Summaries."
+            }
+        }
+        if let reasoningNote { announce(reasoningNote) }
     }
 
     /// Why Test can't be pressed yet, if it can't.

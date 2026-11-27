@@ -1,13 +1,21 @@
 // The language model that writes summaries, suggests names and answers questions runs on this Mac.
-// It's Qwen3, in one of two sizes, run by llama.cpp's server: a small program inside Oatcake that is
-// started on this Mac's own address (127.0.0.1) when there's something to write and stopped when
-// there's been nothing for a while. The model's file is downloaded once, from a fixed revision on
+// It's one of Qwen's models, the best that fits this Mac's memory, run by llama.cpp's server: a
+// small program inside Oatcake that is started on this Mac's own address (127.0.0.1) when there's
+// something to write and stopped when there's been nothing for a while. The model's file is downloaded once, from a fixed revision on
 // Hugging Face, and checked against its SHA-256 when it arrives and again whenever its size or
 // modification date has changed since. Nothing is sent anywhere.
 
 import CryptoKit
 import Foundation
 import Security
+
+/// How a model's makers say to sample from it, for one way of asking. Every Qwen model takes top_k 20
+/// and min_p 0; what differs is how hot it runs and how much it's kept from repeating itself.
+public struct Sampling: Sendable, Equatable {
+    let temperature: Double
+    let topP: Double
+    let presencePenalty: Double
+}
 
 public struct LocalModel: Sendable, Identifiable, Equatable {
     public let id: String
@@ -22,32 +30,86 @@ public struct LocalModel: Sendable, Identifiable, Equatable {
     /// can hold in mind at once. Measured with llama.cpp on Apple silicon.
     let baseMemory: Double
     let memoryPerThousandTokens: Double
+    /// The tokens it reads as it was trained to. Beyond them the window is stretched (YaRN), which
+    /// Qwen says to do only when a text needs it.
+    let nativeContext: Int
+    /// Its makers' sampling with reasoning on, and with it off.
+    let thinking: Sampling
+    let direct: Sampling
+    /// Room for one request's reasoning and reply together. A model that reasons at length needs
+    /// more, or its reply is cut off.
+    let replyTokens: Int
+    /// Kept for the people who chose it: a newer model does its job better, and it's never recommended.
+    public let legacy: Bool
+    /// Which tasks it reasons through, as it's set up when it's chosen: what suited it in Oatcake's
+    /// tests, which looked for a summary within two minutes on a 2023 MacBook Pro (M3 Pro).
+    public let reasoning: LlmConfig.Reasoning
 
     public var downloadSize: String { String(format: "%.1f GB", Double(bytes) / 1e9) }
 
     /// GB of memory with room for `context` tokens.
     func memory(context: Int) -> Double { baseMemory + memoryPerThousandTokens * Double(context) / 1000 }
+
+    /// How many times over a window stretches the positions the model was trained on (YaRN): 1 when
+    /// it's within them. Only for a text that needs it, and no further than it needs (Qwen's own advice).
+    func stretch(_ context: Int) -> Int { max(1, Int((Double(context) / Double(nativeContext)).rounded(.up))) }
+
+    /// Whether a server running with one window can do a job that needs another: it has to be big
+    /// enough, and stretched just as far as the job needs. A stretched window reads a shorter text
+    /// a little worse, so a job that fits the model's own window never borrows one.
+    func serves(running: Int, needed: Int) -> Bool { running >= needed && stretch(running) == stretch(needed) }
 }
 
+/// Qwen3's sampling (its model cards): cooler with reasoning on than off.
+private let qwen3 = (thinking: Sampling(temperature: 0.6, topP: 0.95, presencePenalty: 1.5),
+                     direct: Sampling(temperature: 0.7, topP: 0.8, presencePenalty: 1.5))
+
+/// Qwen3.5's and Qwen3.6's (their model cards): hotter with reasoning on.
+private let qwen35 = (thinking: Sampling(temperature: 1.0, topP: 0.95, presencePenalty: 1.5),
+                      direct: Sampling(temperature: 0.7, topP: 0.8, presencePenalty: 1.5))
+
+/// Qwen3.5 and Qwen3.6 reason for 6,000 to 10,000 tokens before a summary: several minutes on a
+/// slower Mac, for summaries no better than they write without it. They start with it off.
+private let reasonsNothing = LlmConfig.Reasoning(summary: false, todos: false, names: false, ask: false, sharing: false)
+
 public enum LocalModels {
-    /// Qwen3 reads up to this many tokens as it was trained to. Beyond it the window is stretched
-    /// (YaRN), which Qwen has checked up to 131,072 tokens and says to use only when a text needs it.
+    /// What a model server of your own is planned for when you haven't said how much it holds:
+    /// Qwen3's own window, which most models people run themselves can take.
     public static let nativeContext = 32_768
     static let contexts = [8_192, 12_288, 16_384, 24_576, 32_768, 49_152, 65_536, 98_304, 131_072]
 
+    /// Best first: the first that fits a Mac is the one it starts with. Qwen publishes the newer
+    /// families' weights but not GGUF files, so theirs are llama.cpp's own conversions (ggml-org),
+    /// which were checked by converting Qwen's weights again with llama.cpp's published steps.
     public static let all: [LocalModel] = [
+        LocalModel(id: "qwen3.6-35b-a3b", title: "Qwen3.6 35B-A3B",
+                   detail: "Made the fewest mistakes in Oatcake’s tests, and it’s quick for its size: only a small part of it works on each word. 20.5 GB to download; needs a Mac with 32 GB of memory or more.",
+                   file: "Qwen3.6-35B-A3B-Q4_K_M.gguf",
+                   url: "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/52f9f9b8052fb9c8b69bba4a95eda0f319ac3d2a/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+                   sha256: "f4ffe03c9139e6a905a5d346f77d9fabdd179367c3280dfd005d1e75ca5ed8c8", bytes: 20_542_732_576,
+                   baseMemory: 20.9, memoryPerThousandTokens: 0.020, nativeContext: 262_144,
+                   thinking: qwen35.thinking, direct: qwen35.direct, replyTokens: 16_384, legacy: false, reasoning: reasonsNothing),
+        LocalModel(id: "qwen3.5-4b", title: "Qwen3.5 4B",
+                   detail: "For Macs with less than 32 GB of memory. In Oatcake’s tests its summaries had fewer mistakes than either Qwen3’s, as fast as Qwen3 4B. With reasoning off, as it starts, it leaves voices for you to name. 3.0 GB to download.",
+                   file: "Qwen3.5-4B-Q4_K_M.gguf",
+                   url: "https://huggingface.co/ggml-org/Qwen3.5-4B-GGUF/resolve/8d43d974efc48399cb58957ad49c8b26bf5a109c/Qwen3.5-4B-Q4_K_M.gguf",
+                   sha256: "217002fa8008ef4fc6d548353a3aebef055a96e6ff8e0e2c0953ef8254a89c14", bytes: 3_032_091_584,
+                   baseMemory: 3.2, memoryPerThousandTokens: 0.033, nativeContext: 262_144,
+                   thinking: qwen35.thinking, direct: qwen35.direct, replyTokens: 16_384, legacy: false, reasoning: reasonsNothing),
         LocalModel(id: "qwen3-8b", title: "Qwen3 8B",
-                   detail: "The more careful of the two. On an hour-long call it kept nearly every decision, with its owner and date, in our tests. 5.0 GB to download; needs a Mac with 16 GB of memory or more.",
+                   detail: "Oatcake’s earlier choice for Macs with 16 GB of memory or more. Its summaries had more mistakes than the newer models’ in Oatcake’s tests. 5.0 GB to download.",
                    file: "Qwen3-8B-Q4_K_M.gguf",
                    url: "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf",
                    sha256: "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785", bytes: 5_027_783_488,
-                   baseMemory: 5.0, memoryPerThousandTokens: 0.14),
+                   baseMemory: 5.0, memoryPerThousandTokens: 0.14, nativeContext: 32_768,
+                   thinking: qwen3.thinking, direct: qwen3.direct, replyTokens: replyTokens, legacy: true, reasoning: LlmConfig.Reasoning()),
         LocalModel(id: "qwen3-4b", title: "Qwen3 4B",
-                   detail: "Half the size and about twice as fast, for Macs with 8 GB of memory. Fine on short calls; on long ones it loses detail, and missed decisions in our tests. 2.5 GB to download.",
+                   detail: "Oatcake’s earlier choice for Macs with 8 GB of memory. Its summaries had more mistakes than the newer models’ in Oatcake’s tests. 2.5 GB to download.",
                    file: "Qwen3-4B-Q4_K_M.gguf",
                    url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
                    sha256: "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5", bytes: 2_497_280_256,
-                   baseMemory: 2.6, memoryPerThousandTokens: 0.14),
+                   baseMemory: 2.6, memoryPerThousandTokens: 0.14, nativeContext: 32_768,
+                   thinking: qwen3.thinking, direct: qwen3.direct, replyTokens: replyTokens, legacy: true, reasoning: LlmConfig.Reasoning()),
     ]
 
     public static func find(_ id: String) -> LocalModel? { all.first { $0.id == id } }
@@ -55,8 +117,11 @@ public enum LocalModels {
     /// This Mac's memory in GB.
     public static var physicalMemory: Double { Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
 
-    /// The model to start with: the 8B where it fits, the 4B on a Mac with less memory.
-    public static func recommended(memory: Double = physicalMemory) -> LocalModel { memory >= 15.5 ? all[0] : all[1] }
+    /// The model to start with: the first in the list (they're best first) that isn't kept only for
+    /// those who chose it and fits this Mac, or the smallest if none does.
+    public static func recommended(memory: Double = physicalMemory) -> LocalModel {
+        all.first { !$0.legacy && fits($0, memory: memory) } ?? all.filter { !$0.legacy }.min { $0.baseMemory < $1.baseMemory }!
+    }
 
     /// Whether the model fits this Mac with room for an hour-long call.
     public static func fits(_ model: LocalModel, memory: Double = physicalMemory) -> Bool {
@@ -73,15 +138,6 @@ public enum LocalModels {
 
     /// The smallest window that holds a prompt of this many tokens and its reply.
     public static func context(forTokens tokens: Int) -> Int { contexts.first { $0 >= tokens } ?? contexts.last! }
-
-    /// How many times over a window stretches the positions the model was trained on (YaRN): 1 when
-    /// it's within them. Only for a text that needs it, and no further than it needs (Qwen's own advice).
-    public static func stretch(_ context: Int) -> Int { max(1, Int((Double(context) / Double(nativeContext)).rounded(.up))) }
-
-    /// Whether a server running with one window can do a job that needs another: it has to be big
-    /// enough, and stretched just as far as the job needs. A stretched window reads a shorter text
-    /// a little worse, so a job that fits the model's own window never borrows one.
-    public static func serves(running: Int, needed: Int) -> Bool { running >= needed && stretch(running) == stretch(needed) }
 
     /// A rough count of the tokens in a text: English runs at about four characters a token, other
     /// languages at fewer, so this errs on the high side.
@@ -337,7 +393,7 @@ public actor ModelServer {
         while true {
             try Task.checkCancellation()
             if !changing {
-                if let running, running.model == model.id, LocalModels.serves(running: running.context, needed: context), process?.isRunning == true {
+                if let running, running.model == model.id, model.serves(running: running.context, needed: context), process?.isRunning == true {
                     leases += 1
                     lastUsed = Date()
                     return running.chat
@@ -378,8 +434,8 @@ public actor ModelServer {
                          "-c", String(context), "-ngl", "99", "-fa", "on", "--no-context-shift", "--no-webui", "--jinja", "-np", "1",
                          // A long call on a slow Mac can take longer to write up than llama.cpp's ten minutes.
                          "--timeout", "3600"]
-        if LocalModels.stretch(context) > 1 {
-            arguments += ["--rope-scaling", "yarn", "--rope-scale", String(LocalModels.stretch(context)), "--yarn-orig-ctx", String(LocalModels.nativeContext)]
+        if model.stretch(context) > 1 {
+            arguments += ["--rope-scaling", "yarn", "--rope-scale", String(model.stretch(context)), "--yarn-orig-ctx", String(model.nativeContext)]
         }
         FileManager.default.createFile(atPath: log.path, contents: nil)
         let server = Process()
@@ -396,7 +452,7 @@ public actor ModelServer {
         process = server
         try? String(server.processIdentifier).write(to: pidFile, atomically: true, encoding: .utf8)
 
-        let chat = LocalChat(baseUrl: "http://127.0.0.1:\(port)/v1", model: model.id, key: key, qwen: true)
+        let chat = LocalChat(baseUrl: "http://127.0.0.1:\(port)/v1", model: model.id, key: key, sampling: (model.thinking, model.direct))
         // Loading takes a few seconds, longer the first time after a restart.
         for _ in 0..<480 {
             guard server.isRunning else {

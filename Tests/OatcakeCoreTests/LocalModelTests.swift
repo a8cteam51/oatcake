@@ -33,33 +33,56 @@ import Testing
     }
 
     /// Which model a Mac starts with, and how much it's given to read at once, go by its memory.
-    @Test func modelsByMemory() {
-        let big = LocalModels.all[0], small = LocalModels.all[1]
-        #expect(LocalModels.recommended(memory: 8) == small && LocalModels.recommended(memory: 16) == big && LocalModels.recommended(memory: 36) == big)
-        #expect(!LocalModels.fits(big, memory: 8) && LocalModels.fits(small, memory: 8) && LocalModels.fits(big, memory: 16))
-        #expect(LocalModels.maxContext(small, memory: 8) == 16_384)
-        #expect(LocalModels.maxContext(big, memory: 16) == 32_768)
-        #expect(LocalModels.maxContext(big, memory: 36) == 131_072)
+    @Test func modelsByMemory() throws {
+        // The list is best first: the recommendation is the first that fits and isn't an older model
+        // kept for those who chose it, and nothing before it in the list would have fitted.
+        for memory in [8.0, 16, 18, 24, 32, 36, 48, 64, 128] {
+            let pick = LocalModels.recommended(memory: memory)
+            #expect(!pick.legacy && LocalModels.fits(pick, memory: memory), "\(memory) GB")
+            #expect(!LocalModels.all.prefix { $0 != pick }.contains { !$0.legacy && LocalModels.fits($0, memory: memory) }, "\(memory) GB")
+        }
+        // Qwen3.6 35B-A3B where it fits, from 32 GB; Qwen3.5 4B below that. Qwen3 is kept for those who chose it.
+        let large = try #require(LocalModels.find("qwen3.6-35b-a3b")), small = try #require(LocalModels.find("qwen3.5-4b"))
+        for memory in [8.0, 16, 18, 24] { #expect(LocalModels.recommended(memory: memory) == small, "\(memory) GB") }
+        for memory in [32.0, 36, 48, 64, 128] { #expect(LocalModels.recommended(memory: memory) == large, "\(memory) GB") }
+        #expect(LocalModels.all.filter(\.legacy).map(\.id) == ["qwen3-8b", "qwen3-4b"])
+        // Each starts with the reasoning that suited it: Qwen3 as before, the newer ones with none,
+        // as they reason for minutes before a summary that's no better for it.
+        #expect(LocalModels.all.allSatisfy { $0.reasoning == ($0.legacy ? LlmConfig.Reasoning() : LlmConfig.Reasoning(summary: false, todos: false, names: false, ask: false, sharing: false)) })
+        let qwen3 = try #require(LocalModels.find("qwen3-8b"))
+        #expect(!LocalModels.fits(qwen3, memory: 8) && LocalModels.fits(qwen3, memory: 16))
+        #expect(LocalModels.maxContext(qwen3, memory: 16) == 32_768 && LocalModels.maxContext(qwen3, memory: 36) == 131_072)
         // The smallest window that holds the job, so no more memory is taken than it needs.
         #expect(LocalModels.context(forTokens: 3_000) == 8_192 && LocalModels.context(forTokens: 20_000) == 24_576)
         #expect(LocalModels.context(forTokens: 500_000) == 131_072)
         // A window stretched past the model's own is for a text that needs it: a job that fits never
         // borrows a server that's running stretched, and a bigger window of the same kind is shared.
-        #expect(LocalModels.stretch(32_768) == 1 && LocalModels.stretch(49_152) == 2 && LocalModels.stretch(131_072) == 4)
-        #expect(LocalModels.serves(running: 32_768, needed: 8_192) && LocalModels.serves(running: 65_536, needed: 49_152))
-        #expect(!LocalModels.serves(running: 49_152, needed: 32_768) && !LocalModels.serves(running: 16_384, needed: 32_768))
-        // The files are the ones that were measured: a fixed revision, with its size and checksum.
+        #expect(qwen3.stretch(32_768) == 1 && qwen3.stretch(49_152) == 2 && qwen3.stretch(131_072) == 4)
+        #expect(qwen3.serves(running: 32_768, needed: 8_192) && qwen3.serves(running: 65_536, needed: 49_152))
+        #expect(!qwen3.serves(running: 49_152, needed: 32_768) && !qwen3.serves(running: 16_384, needed: 32_768))
+        // A model trained on a longer text is never stretched for one Oatcake would send it.
+        for model in LocalModels.all where model.nativeContext >= 131_072 {
+            #expect(model.stretch(131_072) == 1 && model.serves(running: 131_072, needed: 8_192))
+        }
+        // The files are the ones that were measured: a fixed revision, with its size and checksum, from
+        // Qwen or from llama.cpp's own conversions of Qwen's models; each with a name of its own.
         for model in LocalModels.all {
-            #expect(model.url.hasPrefix("https://huggingface.co/Qwen/") && model.url.contains("/resolve/") && model.url.hasSuffix(model.file))
+            #expect(model.url.hasPrefix("https://huggingface.co/Qwen/") || model.url.hasPrefix("https://huggingface.co/ggml-org/"))
+            #expect(model.url.range(of: #"/resolve/[0-9a-f]{40}/"#, options: .regularExpression) != nil && model.url.hasSuffix("/" + model.file))
             #expect(model.sha256.count == 64 && model.bytes > 2_000_000_000)
         }
+        #expect(Set(LocalModels.all.map(\.file)).count == LocalModels.all.count && Set(LocalModels.all.map(\.id)).count == LocalModels.all.count)
+        // A model that reasons at length gets room for it; a server of your own gets what Qwen3 does.
+        for model in LocalModels.all { #expect(replyRoom(LlmConfig(model: model.id)) == model.replyTokens && model.replyTokens >= replyTokens) }
+        #expect(replyRoom(LlmConfig(model: LlmConfig.ownServer)) == replyTokens)
     }
 
     /// What goes to the model's server: Qwen's own sampling for each mode, its reasoning switch, the
     /// shape a reply must fit, and the key Oatcake made up for its own server.
     @Test func requests() async throws {
         let server = try await StandIn.model { _ in "<think>\nLet me see.\n</think>\n\nOK" }
-        let own = LocalChat(baseUrl: server.address + "/v1", model: "qwen3-8b", key: "made-up", qwen: true)
+        let qwen3 = try #require(LocalModels.find("qwen3-8b"))
+        let own = LocalChat(baseUrl: server.address + "/v1", model: "qwen3-8b", key: "made-up", sampling: (qwen3.thinking, qwen3.direct))
         #expect(await own.isReady() && server.requests.last?.path == "/health")
         #expect(try await own.complete([ChatMessage("system", "Be brief."), ChatMessage("user", "Say OK.")], schema: todosSchema) == "OK")
         #expect(try await own.complete([ChatMessage("user", "Say OK.")], think: false, maxTokens: 20) == "OK")
@@ -75,6 +98,14 @@ import Testing
         #expect(thinking["max_tokens"] as? Int == 8_192 && sent[0].messages.system == "Be brief.")
         #expect(plain["temperature"] as? Double == 0.7 && plain["top_p"] as? Double == 0.8 && plain["max_tokens"] as? Int == 20)
         #expect((plain["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false && plain["response_format"] == nil)
+        // Qwen3.5 and Qwen3.6 run hotter with reasoning on, and the same as Qwen3 with it off.
+        let newer = try #require(LocalModels.find("qwen3.6-35b-a3b"))
+        let next = LocalChat(baseUrl: server.address + "/v1", model: newer.id, key: "made-up", sampling: (newer.thinking, newer.direct))
+        _ = try await next.complete([ChatMessage("user", "Say OK.")], think: true)
+        _ = try await next.complete([ChatMessage("user", "Say OK.")], think: false)
+        let (hot, cool) = (server.requests[server.requests.count - 2].json, server.requests[server.requests.count - 1].json)
+        #expect(hot["temperature"] as? Double == 1.0 && hot["top_p"] as? Double == 0.95 && hot["presence_penalty"] as? Double == 1.5)
+        #expect(cool["temperature"] as? Double == 0.7 && cool["top_p"] as? Double == 0.8 && cool["presence_penalty"] as? Double == 1.5)
 
         // A server of your own gets no key, no switch it may not know, and none of Qwen's sampling:
         // it keeps its own. The room for the reply and the shape it must fit still go.
@@ -142,7 +173,8 @@ import Testing
             #expect(left["reasoning_effort"] == nil && left["chat_template_kwargs"] == nil)
         }
         // Oatcake's own Qwen is told as before, and never in Ollama's way.
-        _ = try await LocalChat(baseUrl: server.address + "/v1", model: "qwen3-8b", key: "made-up", qwen: true).complete([ChatMessage("user", "Say OK.")], think: false)
+        let qwen3 = try #require(LocalModels.find("qwen3-8b"))
+        _ = try await LocalChat(baseUrl: server.address + "/v1", model: "qwen3-8b", key: "made-up", sampling: (qwen3.thinking, qwen3.direct)).complete([ChatMessage("user", "Say OK.")], think: false)
         let qwen = try #require(server.requests.last).json
         #expect((qwen["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false && qwen["reasoning_effort"] == nil)
 
@@ -193,8 +225,7 @@ import Testing
             return StandIn.Response(status: 206, headers: ["Content-Range": "bytes \(from)-\(content.count - 1)/\(content.count)"], body: content[from...])
         }
         func model(sha256: String) -> LocalModel {
-            LocalModel(id: "test", title: "Test model", detail: "", file: "test.gguf", url: server.address + "/test.gguf", sha256: sha256,
-                       bytes: Int64(content.count), baseMemory: 1, memoryPerThousandTokens: 0.1)
+            testModel(url: server.address + "/test.gguf", sha256: sha256, bytes: Int64(content.count))
         }
         let good = model(sha256: SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined())
         let file = dir.appendingPathComponent("test.gguf"), part = file.appendingPathExtension("part")
@@ -240,9 +271,8 @@ import Testing
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let content = Data((0..<100_000).map { UInt8(truncatingIfNeeded: $0 &* 13) })
-        let model = LocalModel(id: "test", title: "Test model", detail: "", file: "test.gguf", url: "https://example.com/test.gguf",
-                               sha256: SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined(),
-                               bytes: Int64(content.count), baseMemory: 1, memoryPerThousandTokens: 0.1)
+        let model = testModel(url: "https://example.com/test.gguf", sha256: SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined(),
+                              bytes: Int64(content.count))
         let file = dir.appendingPathComponent("test.gguf"), note = file.appendingPathExtension("checked")
         // A date to a whole second, so it can be put back exactly.
         let date = Date(timeIntervalSince1970: 1_800_000_000)
@@ -343,7 +373,8 @@ import Testing
             #expect(error.localizedDescription.hasPrefix("The model at \(redirecting.address)/v1 returned 307"))
         }
         // Nor is one from Oatcake's own server's /health.
-        #expect(await !LocalChat(baseUrl: redirecting.address + "/v1", model: "qwen3-8b", key: "made-up", qwen: true).isReady())
+        let qwen3 = try #require(LocalModels.find("qwen3-8b"))
+        #expect(await !LocalChat(baseUrl: redirecting.address + "/v1", model: "qwen3-8b", key: "made-up", sampling: (qwen3.thinking, qwen3.direct)).isReady())
         #expect(elsewhere.requests.isEmpty && redirecting.requests.count == 2)
     }
 
@@ -374,4 +405,12 @@ import Testing
         let failing = try await StandIn { _ in StandIn.Response(status: 404, body: Data(#"{"error":"model not found"}"#.utf8)) }
         await #expect(throws: OatcakeError.self) { _ = try await checkModel(failing.config.llm) }
     }
+}
+
+/// A made-up model file for the download and checksum tests, otherwise like Qwen3 4B.
+private func testModel(url: String, sha256: String, bytes: Int64) -> LocalModel {
+    let like = LocalModels.find("qwen3-4b")!
+    return LocalModel(id: "test", title: "Test model", detail: "", file: "test.gguf", url: url, sha256: sha256, bytes: bytes,
+                      baseMemory: 1, memoryPerThousandTokens: 0.1, nativeContext: like.nativeContext, thinking: like.thinking,
+                      direct: like.direct, replyTokens: like.replyTokens, legacy: false, reasoning: like.reasoning)
 }

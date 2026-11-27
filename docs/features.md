@@ -100,7 +100,8 @@ Everything Oatcake does today, with a link to where each is described. Planned w
   besides, whose to-dos can be edited or deleted there. ⌘Z undoes a tick.
   [To-dos](how-it-works.md#to-dos)
 - To-dos can be turned off altogether. [General](settings.md#general)
-- Qwen3 8B or 4B, downloaded and run by Oatcake, or a model server of your own on your Mac or
+- Qwen3.6 35B-A3B or Qwen3.5 4B, by this Mac's memory (Qwen3 8B and 4B are still there for those
+  who chose them), downloaded and run by Oatcake, or a model server of your own on your Mac or
   network, sent as much at once as its context holds. [Language model](models.md#language-model)
 
 ## Meetings

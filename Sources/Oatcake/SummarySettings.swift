@@ -28,7 +28,7 @@ extension SettingsView {
         Section {
             InstructionsRow(title: "Summary instructions", setting: \.summaryInstructions, standard: defaultSummaryInstructions,
                             applies: "Used for summaries written from now on.")
-            reasoningToggle(\.summary, detail: "Slower, but in Oatcake’s tests decisions went to the right person more reliably.")
+            reasoningToggle(\.summary)
         } header: {
             Text("Summary")
         } footer: {
@@ -39,7 +39,7 @@ extension SettingsView {
             Section {
                 InstructionsRow(title: "To-do instructions", setting: \.todoInstructions, standard: defaultTodoInstructions,
                                 applies: "Used for to-dos collected from now on.")
-                reasoningToggle(\.todos, detail: "Slower, and in Oatcake’s tests to-dos lost detail, so it starts off.")
+                reasoningToggle(\.todos)
             } header: {
                 Text("To-dos")
             } footer: {
@@ -49,32 +49,33 @@ extension SettingsView {
         Section {
             InstructionsRow(title: "Draft for sharing instructions", setting: \.sharingInstructions, standard: defaultSharingInstructions,
                             applies: "Used for drafts written from now on.")
-            reasoningToggle(\.sharing, detail: "Slower. It starts on, as for summaries.")
+            reasoningToggle(\.sharing)
         } header: {
             Text("Draft for sharing")
         } footer: {
             Text("Draft for Sharing… in a meeting rewrites its \(model.config.todosEnabled ? "summary and to-dos" : "summary") for other people. It doesn’t read the transcript or your notes.").settingsHint()
         }
         Section {
-            reasoningToggle(\.names, title: "Name suggestions", detail: "Slower, but in Oatcake’s tests names were made up less often.")
-            reasoningToggle(\.ask, title: "Ask", detail: "Slower, but in Oatcake’s tests answers kept to the question more.")
+            reasoningToggle(\.names, title: "Name suggestions")
+            reasoningToggle(\.ask, title: "Ask")
         } header: {
             Text("Reasoning for name suggestions and Ask")
         }
     }
 
     /**
-     * Whether the model thinks a task through before it replies. Oatcake's own models are always told;
-     * a server of yours only once you've said which switch it takes (Settings › Models). Until then it
-     * decides for itself, so the switch is shown but can't be changed.
+     * Whether the model thinks a task through before it replies. Oatcake's own models are always told,
+     * and each comes with the switches that suited it; a server of yours only once you've said which
+     * switch it takes (Settings › Models). Until then it decides for itself, so the switch is shown
+     * but can't be changed.
      */
-    private func reasoningToggle(_ task: WritableKeyPath<LlmConfig.Reasoning, Bool>, title: String = "Reasoning", detail: String) -> some View {
+    private func reasoningToggle(_ task: WritableKeyPath<LlmConfig.Reasoning, Bool>, title: String = "Reasoning") -> some View {
         let undecided = LocalModels.find(model.config.llm.model) == nil && model.config.llm.own.reasoningControl == nil
         let reasoning: WritableKeyPath<LlmConfig, LlmConfig.Reasoning> = \.reasoning
         return Toggle(isOn: bindLlm(reasoning.appending(path: task))) {
             Text(title)
             Text(undecided ? "A model server of your own decides this for itself, until you choose its reasoning switch in Settings › Models."
-                 : "The model thinks it through before replying. \(detail)")
+                 : "The model thinks it through before replying, which is slower. Choosing one of Oatcake’s models in Settings › Models sets this to what suits it.")
         }
         .disabled(undecided)
     }

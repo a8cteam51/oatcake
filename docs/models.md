@@ -24,11 +24,26 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
 
 | Model | For | Download | Licence |
 | --- | --- | --- | --- |
-| Qwen3 8B (Q4_K_M) | Macs with 16 GB of memory or more; the default there | 5.0 GB | Apache-2.0 |
-| Qwen3 4B (Q4_K_M) | Macs with 8 GB; fine on short calls, loses detail on long ones | 2.5 GB | Apache-2.0 |
+| Qwen3.6 35B-A3B (Q4_K_M) | Macs with 32 GB of memory or more; the default there | 20.5 GB | Apache-2.0 |
+| Qwen3.5 4B (Q4_K_M) | Macs with less; the default there | 3.0 GB | Apache-2.0 |
+| Qwen3 8B (Q4_K_M) | Older model, kept for those who chose it; the earlier default on Macs with 16 GB or more | 5.0 GB | Apache-2.0 |
+| Qwen3 4B (Q4_K_M) | Older model, kept for those who chose it; the earlier default on Macs with 8 GB | 2.5 GB | Apache-2.0 |
 
-- **Where it comes from.** Qwen's own GGUF files on Hugging Face, at a fixed revision
-  (`LocalModels` in `Sources/OatcakeCore/LocalModel.swift`). The file is checked against its
+- **Why these.** Measured in November 2026 on a made-up 35-minute call with an answer key, three
+  runs each, every summary graded blind for factual mistakes. Serious mistakes over three
+  summaries: Qwen3.6 35B-A3B 1, Qwen3.5 4B 7, Qwen3 4B 10, Qwen3 8B 17. The aim was a summary
+  within two minutes on a 2023 MacBook Pro (M3 Pro), estimated from llama.cpp's own speed table
+  for Apple silicon: about 100–130 seconds for the 35B-A3B and 95 for the 3.5 4B (the 8B, with
+  reasoning, about 150). The 35B-A3B is quick for its size because only about 3 billion of its
+  parameters work on each token. Qwen3.8 27B and Qwen3 14B were tried too: the 27B took 6–9
+  minutes a summary, and the 14B was no better than the 8B and slower.
+
+- **Where it comes from.** Hugging Face, at a fixed revision (`LocalModels` in
+  `Sources/OatcakeCore/LocalModel.swift`): Qwen's own GGUF files for Qwen3, and llama.cpp's own
+  conversions (ggml-org) for Qwen3.5 and Qwen3.6, which Qwen publishes only as weights. Each
+  ggml-org file was checked by converting Qwen's weights again with llama.cpp's published steps:
+  most tensors came out identical and the rest differed only in rounding, no further from Qwen's
+  weights than ours. The file is checked against its
   SHA-256 when it has downloaded, and again before the model is started whenever its size or
   modification date has changed since it last passed; one that doesn't match is thrown away and
   downloaded again the next time it's needed. A download that's interrupted carries on from where
@@ -40,12 +55,17 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   picked for the occasion, with a key made up each time so that a web page or another account on
   the Mac can't use it, and stops it after ten minutes with nothing to do, which gives its memory
   back.
-- **How it's asked.** As Qwen advises for these models: its own sampling settings, never greedy
+- **How it's asked.** As Qwen advises for each model: its own sampling settings, never greedy
   decoding and room for a long reply. Whether it reasons before it replies is set for each task
-  (Settings › Summaries): on to start with for summaries, name suggestions and Ask, where it
-  measured better (decisions given to the right person, fewer invented names, answers that keep
-  to the question), and off for to-dos, which lost detail with it. Drafts for sharing start on too,
-  as summaries do; that wasn't measured. A server of your own is told only once you've chosen the
+  (Settings › Summaries), and choosing a model in Settings › Models sets the switches to what
+  suits it, saying which changed. Qwen3.5 and Qwen3.6 start with all of them off: they reason for
+  6,000–10,000 tokens before a summary, minutes on a slower Mac, and their summaries were no
+  better for it. With it off, Qwen3.5 4B leaves voices for you to name rather than suggest names;
+  with it on it suggests them, but takes several minutes. Qwen3 starts with it on for summaries,
+  name suggestions and Ask, where it measured better (decisions given to the right person, fewer
+  invented names, answers that keep to the question), and off for to-dos, which lost detail with
+  it; drafts for sharing start on too, as summaries do (not measured). A server of your own is
+  told only once you've chosen the
   switch it takes (Settings › Models › Reasoning switch: Ollama's `reasoning_effort` or llama.cpp's
   `enable_thinking`); until then it decides for itself. The summary and the to-dos are
   two requests about the same transcript, each with its task after the transcript; the to-dos,
@@ -54,9 +74,10 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   come before its time (time first, it makes a to-do of every few minutes of the call). The
   summary's instructions are yours to change, and so is what counts as a to-do (Settings › Summaries).
 - **How much it reads at once.** As little as the job needs, up to what this Mac's memory allows
-  (the 8B takes about 5 GB plus 0.14 GB for every thousand tokens; an hour's call is around
-  12,000). Qwen3 reads 32,768 tokens natively; a longer call stretches that with YaRN, by no more
-  than it needs. A server of your own is sent as much at once as you've told Oatcake it holds
+  (the 35B-A3B takes about 21 GB plus 0.02 GB for every thousand tokens, the 3.5 4B about 3 GB plus
+  0.03, the Qwen3 8B about 5 GB plus 0.14; an hour's call is around 12,000). Qwen3.5 and Qwen3.6
+  read 262,144 tokens natively, more than Oatcake ever sends. Qwen3 reads 32,768; a longer call
+  stretches that with YaRN, by no more than it needs. A server of your own is sent as much at once as you've told Oatcake it holds
   (Settings › Models › Context), or 32,768 tokens. A call too long for this Mac (or for that
   server) is summarised in parts, which are then joined.
 - **A model of your own.** Any server with the same chat API on this Mac or your network (Ollama,
