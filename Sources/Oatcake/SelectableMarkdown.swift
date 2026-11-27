@@ -92,8 +92,10 @@ private final class AnswerTextView: NSTextView, @preconcurrency NSAccessibilityC
     func rotor(_ rotor: NSAccessibilityCustomRotor, resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
         guard let storage = textStorage else { return nil }
         var headings: [NSRange] = []
+        // Typed into the rotor, the filter narrows the headings to those with it in their words.
+        let filter = search.filterString.trimmingCharacters(in: .whitespaces)
         storage.enumerateAttribute(.markdownHeading, in: NSRange(location: 0, length: storage.length)) { level, range, _ in
-            if level != nil { headings.append(range) }
+            if level != nil, filter.isEmpty || storage.attributedSubstring(from: range).string.localizedStandardContains(filter) { headings.append(range) }
         }
         let forward = search.searchDirection == .next
         let from = search.currentItem?.targetRange.location ?? (forward ? -1 : Int.max)
@@ -279,8 +281,15 @@ func markdownText(_ markdown: String, fontSize: CGFloat, marks: [String] = []) -
             let cells = rows.enumerated().map { r, row in
                 (0..<columns).map { c in inlineText(row.indices.contains(c) ? row[c] : AttributedString(), font: hasHeader && r == 0 ? header : small) }
             }
-            // Each column as wide as its widest cell, so the table takes no more room than it needs.
+            // A small table is as wide as its cells' text on one line, column by column. One that
+            // might not fit (wider than the narrowest a meeting gets) takes the full width, which
+            // TextKit shares out among the columns, wrapping their text: fixed widths that didn't
+            // fit were squeezed in and broke a short column's words ("Ow-ner"), and TextKit's own
+            // sizing wraps a small table's ("Monthl-y").
             let widths = (0..<columns).map { c in (cells.map { ceil($0[c].size().width) }.max() ?? 0) }
+            // Its text, each column's padding (8 a side) and line, and the table's own edges.
+            let fixed = widths.reduce(0, +) + CGFloat(columns) * 17 + 2 <= 400
+            if !fixed { table.setContentWidth(100, type: .percentageValueType) }
             newParagraph()
             for (r, row) in cells.enumerated() {
                 for (c, cell) in row.enumerated() {
@@ -293,7 +302,7 @@ func markdownText(_ markdown: String, fontSize: CGFloat, marks: [String] = []) -
                     box.setWidth(4, type: .absoluteValueType, for: .padding, edge: .maxY)
                     box.setWidth(8, type: .absoluteValueType, for: .padding, edge: .minX)
                     box.setWidth(8, type: .absoluteValueType, for: .padding, edge: .maxX)
-                    box.setContentWidth(widths[c] + 1, type: .absoluteValueType)
+                    if fixed { box.setContentWidth(widths[c] + 1, type: .absoluteValueType) }
                     let style = paragraph { $0.lineSpacing = 0 }
                     style.textBlocks = [box]
                     let text = NSMutableAttributedString(attributedString: cell)
