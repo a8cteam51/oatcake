@@ -362,8 +362,8 @@ a to-do's time (on the line under it, after its owner and due date) jumps to tha
 transcript. **To-dos** at the top of the sidebar gathers every meeting's to-dos (open and overdue
 counts beside it): Open / Done / All, grouped by due date, folder or owner, and everyone's, yours
 ("Mine" is your name from Settings) or one person's. It keeps those choices while Oatcake is open.
-Ticking one there updates that meeting's `todo.md`, and under Open it leaves the list (⌘Z brings
-it back, and it's under Done too). Add a to-do under a meeting's Summary and it goes in that
+Ticking one there updates that meeting's `todo.md`, and under Open it leaves the list a moment
+later, once its tick and line have been seen (⌘Z brings it back, and it's under Done too). Add a to-do under a meeting's Summary and it goes in that
 meeting's `todo.md`; add one on the To-dos page and it goes in the Meetings folder's own
 `todo.md`, owned by you unless you name someone. Type owner and due date after dashes, as the
 page says under the field: `Send the deck - Jane - due Fri, Nov 6`. Only the last piece that isn't

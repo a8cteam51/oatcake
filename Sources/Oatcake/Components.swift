@@ -240,11 +240,21 @@ struct TodoCheckbox: View {
     /// The to-do's text, so the button can be told apart from the next one without seeing it.
     var what = ""
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Counts ticks, not unticks: the box gives a little bounce only as a to-do is done.
+    @ViewState private var ticks = 0
+
     var body: some View {
         Button(action: action) {
             Image(systemName: checked ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 15))
                 .foregroundStyle(checked ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                // The circle fills and the tick appears in it, then the box bounces. With Reduce
+                // motion the tick only fades in.
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, options: .nonRepeating, value: ticks)
+                .animation(reduceMotion ? .easeInOut(duration: 0.15) : .snappy(duration: 0.25), value: checked)
+                .onChange(of: checked) { _, now in if now && !reduceMotion { ticks += 1 } }
                 // At least 24 points to click, with the circle no bigger. A row aligned on its top
                 // lines up the circle's own top, so the room around it doesn't push it below the text.
                 .alignmentGuide(.top) { $0[.top] }
