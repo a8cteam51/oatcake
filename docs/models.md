@@ -20,16 +20,18 @@ speaker separation on a known meeting.
 
 ## Language model
 
-Summaries, to-dos, name suggestions and Ask's answers come from one model, run on this Mac.
+Summaries, to-dos, name suggestions and Ask's answers come from one model, run on this Mac:
+Alibaba's Qwen or Google's Gemma. Each one's description in Settings › Models says, in a few
+words, how it did in the tests below.
 
-| Model | For | Download | Licence |
-| --- | --- | --- | --- |
-| Qwen3.6 35B-A3B (Q4_K_M) | Macs with 32 GB of memory or more; the default there | 20.5 GB | Apache-2.0 |
-| Qwen3.5 4B (Q4_K_M) | Macs with less; the default there | 3.0 GB | Apache-2.0 |
-| Gemma 4 26B-A4B (Google's QAT Q4_0) | Macs with 24 GB of memory or more, to choose instead | 14.4 GB | Apache-2.0 |
-| Gemma 4 12B (Google's QAT Q4_0) | Macs with 16 GB of memory or more, to choose instead | 7.0 GB | Apache-2.0 |
-| Qwen3 8B (Q4_K_M) | Older model, kept for those who chose it; the earlier default on Macs with 16 GB or more | 5.0 GB | Apache-2.0 |
-| Qwen3 4B (Q4_K_M) | Older model, kept for those who chose it; the earlier default on Macs with 8 GB | 2.5 GB | Apache-2.0 |
+| Model | By | For | Download | Licence |
+| --- | --- | --- | --- | --- |
+| Qwen3.6 35B-A3B (Q4_K_M) | Alibaba | Macs with 32 GB of memory or more; the default there | 20.5 GB | Apache-2.0 |
+| Qwen3.5 4B (Q4_K_M) | Alibaba | Macs with less; the default there | 3.0 GB | Apache-2.0 |
+| Gemma 4 26B-A4B (QAT Q4_0) | Google | Macs with 24 GB of memory or more, to choose instead | 14.4 GB | Apache-2.0 |
+| Gemma 4 12B (QAT Q4_0) | Google | Macs with 16 GB of memory or more, to choose instead | 7.0 GB | Apache-2.0 |
+| Qwen3 8B (Q4_K_M) | Alibaba | Older model, kept for those who chose it; the earlier default on Macs with 16 GB or more | 5.0 GB | Apache-2.0 |
+| Qwen3 4B (Q4_K_M) | Alibaba | Older model, kept for those who chose it; the earlier default on Macs with 8 GB | 2.5 GB | Apache-2.0 |
 
 - **Why these.** Measured in November 2026 on a made-up 35-minute call with an answer key, three
   runs each, every summary graded blind for factual mistakes. Serious mistakes over three
