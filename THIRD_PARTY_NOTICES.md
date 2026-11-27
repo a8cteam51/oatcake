@@ -94,6 +94,9 @@ From FluidInference's Core ML conversions on Hugging Face:
 
 From llama.cpp's own GGUF conversions of Qwen's models on Hugging Face (ggml-org/Qwen3.6-35B-A3B-GGUF
 and ggml-org/Qwen3.5-4B-GGUF, Q4_K_M), and Qwen's own GGUF files (Qwen/Qwen3-8B-GGUF and
-Qwen/Qwen3-4B-GGUF, Q4_K_M), at the revisions named in `Sources/OatcakeCore/LocalModel.swift`:
+Qwen/Qwen3-4B-GGUF, Q4_K_M), and Google's own GGUF files of Gemma 4
+(google/gemma-4-26B-A4B-it-qat-q4_0-gguf and google/gemma-4-12B-it-qat-q4_0-gguf), at the
+revisions named in `Sources/OatcakeCore/LocalModel.swift`:
 
 - Qwen3.6 35B-A3B, Qwen3.5 4B, Qwen3 8B and Qwen3 4B, the language model: Apache-2.0
+- Gemma 4 26B-A4B and Gemma 4 12B, the language model when chosen instead: Apache-2.0

@@ -41,11 +41,16 @@ import Testing
             #expect(!pick.legacy && LocalModels.fits(pick, memory: memory), "\(memory) GB")
             #expect(!LocalModels.all.prefix { $0 != pick }.contains { !$0.legacy && LocalModels.fits($0, memory: memory) }, "\(memory) GB")
         }
-        // Qwen3.6 35B-A3B where it fits, from 32 GB; Qwen3.5 4B below that. Qwen3 is kept for those who chose it.
+        // Qwen3.6 35B-A3B where it fits, from 32 GB; Qwen3.5 4B below that. Gemma 4 is there to choose
+        // instead, never to start with. Qwen3 is kept for those who chose it.
         let large = try #require(LocalModels.find("qwen3.6-35b-a3b")), small = try #require(LocalModels.find("qwen3.5-4b"))
         for memory in [8.0, 16, 18, 24] { #expect(LocalModels.recommended(memory: memory) == small, "\(memory) GB") }
         for memory in [32.0, 36, 48, 64, 128] { #expect(LocalModels.recommended(memory: memory) == large, "\(memory) GB") }
         #expect(LocalModels.all.filter(\.legacy).map(\.id) == ["qwen3-8b", "qwen3-4b"])
+        let gemma = try #require(LocalModels.find("gemma-4-26b-a4b")), smallGemma = try #require(LocalModels.find("gemma-4-12b"))
+        #expect(!gemma.legacy && !smallGemma.legacy)
+        #expect(!LocalModels.fits(gemma, memory: 18) && LocalModels.fits(gemma, memory: 24))
+        #expect(!LocalModels.fits(smallGemma, memory: 8) && LocalModels.fits(smallGemma, memory: 16))
         // Each starts with the reasoning that suited it: Qwen3 as before, the newer ones with none,
         // as they reason for minutes before a summary that's no better for it.
         #expect(LocalModels.all.allSatisfy { $0.reasoning == ($0.legacy ? LlmConfig.Reasoning() : LlmConfig.Reasoning(summary: false, todos: false, names: false, ask: false, sharing: false)) })
@@ -65,9 +70,9 @@ import Testing
             #expect(model.stretch(131_072) == 1 && model.serves(running: 131_072, needed: 8_192))
         }
         // The files are the ones that were measured: a fixed revision, with its size and checksum, from
-        // Qwen or from llama.cpp's own conversions of Qwen's models; each with a name of its own.
+        // Qwen, from llama.cpp's own conversions of Qwen's models, or from Google; each with a name of its own.
         for model in LocalModels.all {
-            #expect(model.url.hasPrefix("https://huggingface.co/Qwen/") || model.url.hasPrefix("https://huggingface.co/ggml-org/"))
+            #expect(["Qwen", "ggml-org", "google"].contains { model.url.hasPrefix("https://huggingface.co/\($0)/") })
             #expect(model.url.range(of: #"/resolve/[0-9a-f]{40}/"#, options: .regularExpression) != nil && model.url.hasSuffix("/" + model.file))
             #expect(model.sha256.count == 64 && model.bytes > 2_000_000_000)
         }
@@ -77,7 +82,7 @@ import Testing
         #expect(replyRoom(LlmConfig(model: LlmConfig.ownServer)) == replyTokens)
     }
 
-    /// What goes to the model's server: Qwen's own sampling for each mode, its reasoning switch, the
+    /// What goes to the model's server: its makers' sampling for each mode, its reasoning switch, the
     /// shape a reply must fit, and the key Oatcake made up for its own server.
     @Test func requests() async throws {
         let server = try await StandIn.model { _ in "<think>\nLet me see.\n</think>\n\nOK" }
@@ -106,6 +111,16 @@ import Testing
         let (hot, cool) = (server.requests[server.requests.count - 2].json, server.requests[server.requests.count - 1].json)
         #expect(hot["temperature"] as? Double == 1.0 && hot["top_p"] as? Double == 0.95 && hot["presence_penalty"] as? Double == 1.5)
         #expect(cool["temperature"] as? Double == 0.7 && cool["top_p"] as? Double == 0.8 && cool["presence_penalty"] as? Double == 1.5)
+        // Gemma 4 samples the same either way, from more of the likeliest tokens and with no penalty.
+        let gemma = try #require(LocalModels.find("gemma-4-26b-a4b"))
+        let google = LocalChat(baseUrl: server.address + "/v1", model: gemma.id, key: "made-up", sampling: (gemma.thinking, gemma.direct))
+        _ = try await google.complete([ChatMessage("user", "Say OK.")], think: true)
+        _ = try await google.complete([ChatMessage("user", "Say OK.")], think: false)
+        for sent in server.requests.suffix(2).map(\.json) {
+            #expect(sent["temperature"] as? Double == 1.0 && sent["top_p"] as? Double == 0.95 && sent["top_k"] as? Int == 64)
+            #expect(sent["presence_penalty"] as? Double == 0 && sent["min_p"] as? Int == 0)
+        }
+        #expect(server.requests.suffix(2).map { ($0.json["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool } == [true, false])
 
         // A server of your own gets no key, no switch it may not know, and none of Qwen's sampling:
         // it keeps its own. The room for the reply and the shape it must fit still go.

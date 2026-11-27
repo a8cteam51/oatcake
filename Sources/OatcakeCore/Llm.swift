@@ -55,8 +55,8 @@ public struct ChatMessage: Sendable, Equatable {
 }
 
 /**
- * A chat server at a local address. Requests to Oatcake's own server follow Qwen's own advice for
- * its models: its sampling settings for each mode and never greedy decoding; a server of your own
+ * A chat server at a local address. Requests to Oatcake's own server follow its model's makers'
+ * advice: their sampling settings for each mode and never greedy decoding; a server of your own
  * keeps its own sampling. Every request leaves room for a long reply, and nothing of the model's
  * reasoning is kept in the conversation. Whether Oatcake's own model reasons before it replies is
  * the caller's to say: Settings › Summaries has a switch for each task (LlmConfig.Reasoning).
@@ -133,7 +133,7 @@ public struct LocalChat: Sendable {
             let chosen = think ? sampling.thinking : sampling.direct
             body["temperature"] = chosen.temperature
             body["top_p"] = chosen.topP
-            body["top_k"] = 20
+            body["top_k"] = chosen.topK
             body["min_p"] = 0
             body["presence_penalty"] = chosen.presencePenalty
             body["chat_template_kwargs"] = ["enable_thinking": think]

@@ -140,8 +140,8 @@ their chosen colour with them, and so does merging them into someone who hasn't 
 - **Language model:** what writes summaries, to-dos and drafts for sharing, suggests names and answers questions.
   Qwen3.6 35B-A3B or Qwen3.5 4B, which Oatcake downloads and runs on this Mac (the one that suits
   its memory is chosen to start with, and marked "recommended for this Mac"; one this Mac has too
-  little memory for says so), Qwen3 8B or 4B (marked "older model": kept for those who chose
-  them), or a model server of your own: Ollama, LM Studio or another with the same
+  little memory for says so), Google's Gemma 4 26B-A4B or 12B, to choose instead, Qwen3 8B or 4B
+  (marked "older model": kept for those who chose them), or a model server of your own: Ollama, LM Studio or another with the same
   chat API (`http://localhost:11434/v1` for Ollama). Its address has to be this Mac, a machine on
   your network or a private IP address, and no key is sent to it. **Context**, for a server of your
   own, is how many tokens it's set to hold (Ollama's `num_ctx`, llama.cpp's `-c`): Oatcake sends no
@@ -166,10 +166,10 @@ side by side. Instructions show as Oatcake's own or yours; **Edit…** opens the
 you type), and **Restore default…** there brings Oatcake's own back. **Reasoning** is whether the
 model thinks a task through before it replies: slower, and not always better. Choosing one of
 Oatcake's models in Settings › Models sets the switches to what suited it in Oatcake's tests
-(Qwen3.5 and Qwen3.6: all off; Qwen3: on except for to-dos). With a server of yours they're shown but can't be changed, as it
+(Qwen3.5, Qwen3.6 and Gemma 4: all off; Qwen3: on except for to-dos). With a server of yours they're shown but can't be changed, as it
 decides for itself, until you choose the **Reasoning switch** it takes in Settings › Models:
 **Ollama** (its `reasoning_effort`: `medium` to reason, `none` not to) or **llama.cpp** (the
-`enable_thinking` that Qwen3's chat template reads, as Oatcake's own server uses). Then each
+`enable_thinking` that Qwen's and Gemma 4's chat templates read, as Oatcake's own server uses). Then each
 switch is sent with its task's requests. A model that can't turn reasoning off (GPT-OSS on Ollama)
 keeps its lowest level; one on Ollama that can't reason at all is asked again without the switch.
 **Leave it to the server**, the default, sends nothing about reasoning.

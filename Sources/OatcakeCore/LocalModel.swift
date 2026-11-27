@@ -1,5 +1,6 @@
 // The language model that writes summaries, suggests names and answers questions runs on this Mac.
-// It's one of Qwen's models, the best that fits this Mac's memory, run by llama.cpp's server: a
+// It's one of Qwen's or Google's open models (Oatcake starts with the best of Qwen's that fits this
+// Mac's memory), run by llama.cpp's server: a
 // small program inside Oatcake that is started on this Mac's own address (127.0.0.1) when there's
 // something to write and stopped when there's been nothing for a while. The model's file is downloaded once, from a fixed revision on
 // Hugging Face, and checked against its SHA-256 when it arrives and again whenever its size or
@@ -9,11 +10,13 @@ import CryptoKit
 import Foundation
 import Security
 
-/// How a model's makers say to sample from it, for one way of asking. Every Qwen model takes top_k 20
-/// and min_p 0; what differs is how hot it runs and how much it's kept from repeating itself.
+/// How a model's makers say to sample from it, for one way of asking. Every model takes min_p 0; what
+/// differs is how hot it runs, how many of the likeliest tokens it picks from, and how much it's kept
+/// from repeating itself.
 public struct Sampling: Sendable, Equatable {
     let temperature: Double
     let topP: Double
+    let topK: Int
     let presencePenalty: Double
 }
 
@@ -61,15 +64,19 @@ public struct LocalModel: Sendable, Identifiable, Equatable {
 }
 
 /// Qwen3's sampling (its model cards): cooler with reasoning on than off.
-private let qwen3 = (thinking: Sampling(temperature: 0.6, topP: 0.95, presencePenalty: 1.5),
-                     direct: Sampling(temperature: 0.7, topP: 0.8, presencePenalty: 1.5))
+private let qwen3 = (thinking: Sampling(temperature: 0.6, topP: 0.95, topK: 20, presencePenalty: 1.5),
+                     direct: Sampling(temperature: 0.7, topP: 0.8, topK: 20, presencePenalty: 1.5))
 
 /// Qwen3.5's and Qwen3.6's (their model cards): hotter with reasoning on.
-private let qwen35 = (thinking: Sampling(temperature: 1.0, topP: 0.95, presencePenalty: 1.5),
-                      direct: Sampling(temperature: 0.7, topP: 0.8, presencePenalty: 1.5))
+private let qwen35 = (thinking: Sampling(temperature: 1.0, topP: 0.95, topK: 20, presencePenalty: 1.5),
+                      direct: Sampling(temperature: 0.7, topP: 0.8, topK: 20, presencePenalty: 1.5))
+
+/// Gemma 4's (its model card): the same with reasoning on or off.
+private let gemma4 = Sampling(temperature: 1.0, topP: 0.95, topK: 64, presencePenalty: 0)
 
 /// Qwen3.5 and Qwen3.6 reason for 6,000 to 10,000 tokens before a summary: several minutes on a
-/// slower Mac, for summaries no better than they write without it. They start with it off.
+/// slower Mac, for summaries no better than they write without it. They start with it off, and so
+/// does Gemma 4, which took two to three times as long with it on.
 private let reasonsNothing = LlmConfig.Reasoning(summary: false, todos: false, names: false, ask: false, sharing: false)
 
 public enum LocalModels {
@@ -78,12 +85,14 @@ public enum LocalModels {
     public static let nativeContext = 32_768
     static let contexts = [8_192, 12_288, 16_384, 24_576, 32_768, 49_152, 65_536, 98_304, 131_072]
 
-    /// Best first: the first that fits a Mac is the one it starts with. Qwen publishes the newer
-    /// families' weights but not GGUF files, so theirs are llama.cpp's own conversions (ggml-org),
-    /// which were checked by converting Qwen's weights again with llama.cpp's published steps.
+    /// Qwen's newer models first, best first: the first that fits a Mac is the one it starts with,
+    /// and Qwen3.5 4B fits every Mac Oatcake runs on. Then Google's Gemma 4, to choose instead, and
+    /// Qwen3, kept for those who chose it. Qwen publishes the newer families' weights but not GGUF
+    /// files, so theirs are llama.cpp's own conversions (ggml-org), which were checked by converting
+    /// Qwen's weights again with llama.cpp's published steps. Gemma's are Google's own.
     public static let all: [LocalModel] = [
         LocalModel(id: "qwen3.6-35b-a3b", title: "Qwen3.6 35B-A3B",
-                   detail: "Made the fewest mistakes in Oatcake’s tests, and it’s quick for its size: only a small part of it works on each word. 20.5 GB to download; needs a Mac with 32 GB of memory or more.",
+                   detail: "Among the fewest mistakes in Oatcake’s tests, and it’s quick for its size: only a small part of it works on each word. 20.5 GB to download; needs a Mac with 32 GB of memory or more.",
                    file: "Qwen3.6-35B-A3B-Q4_K_M.gguf",
                    url: "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/52f9f9b8052fb9c8b69bba4a95eda0f319ac3d2a/Qwen3.6-35B-A3B-Q4_K_M.gguf",
                    sha256: "f4ffe03c9139e6a905a5d346f77d9fabdd179367c3280dfd005d1e75ca5ed8c8", bytes: 20_542_732_576,
@@ -96,6 +105,20 @@ public enum LocalModels {
                    sha256: "217002fa8008ef4fc6d548353a3aebef055a96e6ff8e0e2c0953ef8254a89c14", bytes: 3_032_091_584,
                    baseMemory: 3.2, memoryPerThousandTokens: 0.033, nativeContext: 262_144,
                    thinking: qwen35.thinking, direct: qwen35.direct, replyTokens: 16_384, legacy: false, reasoning: reasonsNothing),
+        LocalModel(id: "gemma-4-26b-a4b", title: "Gemma 4 26B-A4B",
+                   detail: "Google’s. The quickest in Oatcake’s tests, with few mistakes, but its summaries were shorter than the others’ and its to-do lists left out a commitment that they found. 14.4 GB to download; needs a Mac with 24 GB of memory or more.",
+                   file: "gemma-4-26B_q4_0-it.gguf",
+                   url: "https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-gguf/resolve/d1c082be9cf3c8a514acf63b8761f4b41935842e/gemma-4-26B_q4_0-it.gguf",
+                   sha256: "3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d", bytes: 14_439_363_584,
+                   baseMemory: 15.5, memoryPerThousandTokens: 0.028, nativeContext: 262_144,
+                   thinking: gemma4, direct: gemma4, replyTokens: 16_384, legacy: false, reasoning: reasonsNothing),
+        LocalModel(id: "gemma-4-12b", title: "Gemma 4 12B",
+                   detail: "Google’s. In Oatcake’s tests its summaries had about as few mistakes as Qwen3.6 35B-A3B’s, but it was the slowest of these models. 7.0 GB to download; needs a Mac with 16 GB of memory or more.",
+                   file: "gemma-4-12b-it-qat-q4_0.gguf",
+                   url: "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/29d097773436b69ff9feafd636ab4cf873786537/gemma-4-12b-it-qat-q4_0.gguf",
+                   sha256: "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b", bytes: 6_975_879_296,
+                   baseMemory: 8.5, memoryPerThousandTokens: 0.022, nativeContext: 262_144,
+                   thinking: gemma4, direct: gemma4, replyTokens: 16_384, legacy: false, reasoning: reasonsNothing),
         LocalModel(id: "qwen3-8b", title: "Qwen3 8B",
                    detail: "Oatcake’s earlier choice for Macs with 16 GB of memory or more. Its summaries had more mistakes than the newer models’ in Oatcake’s tests. 5.0 GB to download.",
                    file: "Qwen3-8B-Q4_K_M.gguf",

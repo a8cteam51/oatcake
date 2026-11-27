@@ -26,6 +26,8 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
 | --- | --- | --- | --- |
 | Qwen3.6 35B-A3B (Q4_K_M) | Macs with 32 GB of memory or more; the default there | 20.5 GB | Apache-2.0 |
 | Qwen3.5 4B (Q4_K_M) | Macs with less; the default there | 3.0 GB | Apache-2.0 |
+| Gemma 4 26B-A4B (Google's QAT Q4_0) | Macs with 24 GB of memory or more, to choose instead | 14.4 GB | Apache-2.0 |
+| Gemma 4 12B (Google's QAT Q4_0) | Macs with 16 GB of memory or more, to choose instead | 7.0 GB | Apache-2.0 |
 | Qwen3 8B (Q4_K_M) | Older model, kept for those who chose it; the earlier default on Macs with 16 GB or more | 5.0 GB | Apache-2.0 |
 | Qwen3 4B (Q4_K_M) | Older model, kept for those who chose it; the earlier default on Macs with 8 GB | 2.5 GB | Apache-2.0 |
 
@@ -37,9 +39,18 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   reasoning, about 150). The 35B-A3B is quick for its size because only about 3 billion of its
   parameters work on each token. Qwen3.8 27B and Qwen3 14B were tried too: the 27B took 6–9
   minutes a summary, and the 14B was no better than the 8B and slower.
+- **Gemma 4.** Measured the same way a day later, beside Qwen3.6 35B-A3B, Qwen3.5 4B and Qwen3 8B
+  again. Serious mistakes over three summaries: Gemma 4 26B-A4B 1, Gemma 4 12B 5, Qwen3.6 35B-A3B
+  5, Qwen3 8B 6, Qwen3.5 4B 13. The same models scored very differently from one day to the next
+  (the 8B 17, then 6), so one call doesn't rank models a few mistakes apart, and the defaults
+  stayed as they were. The 26B-A4B was the quickest, about 77 seconds on an M3 Pro, but its
+  summaries were the shortest (415–600 words, to 670–750 for the 35B-A3B), and its to-do lists
+  left out a commitment that every other model found. The 12B took about 180 seconds. With
+  reasoning on, both took two to three times as long.
 
 - **Where it comes from.** Hugging Face, at a fixed revision (`LocalModels` in
-  `Sources/OatcakeCore/LocalModel.swift`): Qwen's own GGUF files for Qwen3, and llama.cpp's own
+  `Sources/OatcakeCore/LocalModel.swift`): Qwen's own GGUF files for Qwen3, Google's own for
+  Gemma 4 (trained for Q4_0), and llama.cpp's own
   conversions (ggml-org) for Qwen3.5 and Qwen3.6, which Qwen publishes only as weights. Each
   ggml-org file was checked by converting Qwen's weights again with llama.cpp's published steps:
   most tensors came out identical and the rest differed only in rounding, no further from Qwen's
@@ -55,12 +66,12 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   picked for the occasion, with a key made up each time so that a web page or another account on
   the Mac can't use it, and stops it after ten minutes with nothing to do, which gives its memory
   back.
-- **How it's asked.** As Qwen advises for each model: its own sampling settings, never greedy
+- **How it's asked.** As each model's makers advise: its own sampling settings, never greedy
   decoding and room for a long reply. Whether it reasons before it replies is set for each task
   (Settings › Summaries), and choosing a model in Settings › Models sets the switches to what
-  suits it, saying which changed. Qwen3.5 and Qwen3.6 start with all of them off: they reason for
-  6,000–10,000 tokens before a summary, minutes on a slower Mac, and their summaries were no
-  better for it. With it off, Qwen3.5 4B leaves voices for you to name rather than suggest names;
+  suits it, saying which changed. Qwen3.5, Qwen3.6 and Gemma 4 start with all of them off: Qwen's
+  reason for 6,000–10,000 tokens before a summary, minutes on a slower Mac, and their summaries
+  were no better for it; Gemma 4 took two to three times as long. With it off, Qwen3.5 4B leaves voices for you to name rather than suggest names;
   with it on it suggests them, but takes several minutes. Qwen3 starts with it on for summaries,
   name suggestions and Ask, where it measured better (decisions given to the right person, fewer
   invented names, answers that keep to the question), and off for to-dos, which lost detail with
@@ -75,15 +86,16 @@ Summaries, to-dos, name suggestions and Ask's answers come from one model, run o
   summary's instructions are yours to change, and so is what counts as a to-do (Settings › Summaries).
 - **How much it reads at once.** As little as the job needs, up to what this Mac's memory allows
   (the 35B-A3B takes about 21 GB plus 0.02 GB for every thousand tokens, the 3.5 4B about 3 GB plus
-  0.03, the Qwen3 8B about 5 GB plus 0.14; an hour's call is around 12,000). Qwen3.5 and Qwen3.6
-  read 262,144 tokens natively, more than Oatcake ever sends. Qwen3 reads 32,768; a longer call
+  0.03, Gemma 4 26B-A4B about 15.5 GB plus 0.03, Gemma 4 12B about 8.5 GB plus 0.02, the Qwen3 8B
+  about 5 GB plus 0.14; an hour's call is around 12,000). Qwen3.5, Qwen3.6 and Gemma 4 read
+  262,144 tokens natively, more than Oatcake ever sends. Qwen3 reads 32,768; a longer call
   stretches that with YaRN, by no more than it needs. A server of your own is sent as much at once as you've told Oatcake it holds
   (Settings › Models › Context), or 32,768 tokens. A call too long for this Mac (or for that
   server) is summarised in parts, which are then joined.
 - **A model of your own.** Any server with the same chat API on this Mac or your network (Ollama,
   LM Studio, your own llama.cpp). Oatcake only talks to a local address, and sends no key. It
   doesn't follow a redirect from that address to another (the redirect is reported as an error). It
-  sends none of Qwen's sampling settings either: the server's own apply, as they suit its model.
+  sends none of Oatcake's sampling settings either: the server's own apply, as they suit its model.
   Each request still says how long the reply may be and, where one is needed, the JSON shape.
 
 Changing the model or llama.cpp's build is a deliberate change, like the speech models: change the
