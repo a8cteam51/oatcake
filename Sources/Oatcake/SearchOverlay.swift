@@ -25,6 +25,9 @@ struct SearchOverlay: View {
     @ViewState private var pointer = NSEvent.mouseLocation
     @ViewState private var listHeight: CGFloat = 0
 
+    /// How dark the window behind search goes.
+    static let dimming = 0.5
+
     private var root: TreeNode? { model.library.tree }
     private var search: String { model.search.query.trimmed }
     /// Every meeting's text has been looked through for these words.
@@ -34,11 +37,14 @@ struct SearchOverlay: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Dark enough that what's behind reads as behind; a click on it closes search.
-            Color.black.opacity(0.3)
+            // Dark enough that what's behind reads as behind, in a dark window too; a click on it
+            // closes search. The toolbar is dimmed the same, by ToolbarDim.
+            Color.black.opacity(Self.dimming)
+                .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { close() }
                 .accessibilityHidden(true)
+                .background(ToolbarDim(opacity: Self.dimming) { close() })
             VStack(spacing: 0) {
                 field
                 if !search.isEmpty {
@@ -54,7 +60,8 @@ struct SearchOverlay: View {
                 }
             }
             .frame(width: 600)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            // Solid: a material took on the dimming behind it and went grey, in light windows most.
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.separator) }
             .shadow(color: .black.opacity(0.25), radius: 30, y: 12)
             .accessibilityElement(children: .contain)
@@ -199,4 +206,77 @@ struct SearchOverlay: View {
     }
 
     private func close() { model.searching = false }
+}
+
+/**
+ * The window's toolbar, dimmed as the rest of the window is while search is open: the toolbar is
+ * drawn above the window's content, where nothing in SwiftUI reaches, and left bright it was the
+ * brightest thing in the window. A click on it closes search, as a click on the rest does.
+ */
+private struct ToolbarDim: NSViewRepresentable {
+    let opacity: Double
+    let onClick: () -> Void
+
+    func makeNSView(context: Context) -> Anchor { Anchor(dim: Dim(opacity: opacity, onClick: onClick)) }
+    func updateNSView(_ view: Anchor, context: Context) { view.dim.onClick = onClick }
+    static func dismantleNSView(_ view: Anchor, coordinator: ()) { view.dim.removeFromSuperview() }
+
+    /// Puts the dimming over the toolbar of whichever window it's in.
+    final class Anchor: NSView {
+        let dim: Dim
+        init(dim: Dim) {
+            self.dim = dim
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { nil }
+
+        private var watching: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // Leaving the window (search closed) stops the watching, as well as moving to another.
+            watching.forEach(NotificationCenter.default.removeObserver)
+            watching = []
+            // The window's frame view holds both the content and the toolbar above it.
+            guard let window, let frame = window.contentView?.superview else { return dim.removeFromSuperview() }
+            frame.addSubview(dim, positioned: .above, relativeTo: nil)
+            place()
+            // The toolbar's height changes in full screen, where it leaves the window.
+            for name in [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                watching.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.place() }
+                })
+            }
+        }
+
+        private func place() {
+            guard let window, let frame = dim.superview else { return }
+            let toolbar = window.frame.height - window.contentLayoutRect.maxY
+            dim.frame = NSRect(x: 0, y: frame.bounds.height - toolbar, width: frame.bounds.width, height: toolbar)
+        }
+    }
+
+    final class Dim: NSView {
+        let opacity: Double
+        var onClick: () -> Void
+        init(opacity: Double, onClick: @escaping () -> Void) {
+            self.opacity = opacity
+            self.onClick = onClick
+            super.init(frame: .zero)
+            wantsLayer = true
+            setAccessibilityElement(false)
+        }
+        required init?(coder: NSCoder) { nil }
+
+        override var wantsUpdateLayer: Bool { true }
+        override func updateLayer() { layer?.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor }
+        override func mouseDown(with event: NSEvent) { onClick() }
+
+        /// The window's close, minimise and zoom buttons still take their clicks, dimmed or not.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            if let buttons = window?.standardWindowButton(.closeButton)?.superview, let superview,
+               buttons.convert(buttons.bounds, to: superview).contains(point) { return nil }
+            return super.hitTest(point)
+        }
+    }
 }
