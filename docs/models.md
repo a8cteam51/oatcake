@@ -67,7 +67,10 @@ words, how it did in the tests below.
   [Security](security.md)). Oatcake starts it when there's something to write, on 127.0.0.1 at a port
   picked for the occasion, with a key made up each time so that a web page or another account on
   the Mac can't use it, and stops it after ten minutes with nothing to do, which gives its memory
-  back.
+  back. Its prompt cache is off: llama.cpp would otherwise keep copies of earlier prompts in memory,
+  up to 8 GB, which isn't in the room a model is given (on two hour-long calls in a row it took 2.7
+  GB more with Qwen3.5 4B, 4.7 with Gemma 4 12B and 7.2 with Qwen3 8B). The prompt it's holding is
+  still reused, so the to-dos after a summary don't read the transcript again.
 - **How it's asked.** As each model's makers advise: its own sampling settings, never greedy
   decoding and room for a long reply. Whether it reasons before it replies is set for each task
   (Settings › Summaries), and choosing a model in Settings › Models sets the switches to what

@@ -453,17 +453,10 @@ public actor ModelServer {
 
         let port = try Self.freePort()
         let key = UUID().uuidString
-        var arguments = ["-m", LocalModels.file(model, in: models).path, "--host", "127.0.0.1", "--port", String(port),
-                         "-c", String(context), "-ngl", "99", "-fa", "on", "--no-context-shift", "--no-webui", "--jinja", "-np", "1",
-                         // A long call on a slow Mac can take longer to write up than llama.cpp's ten minutes.
-                         "--timeout", "3600"]
-        if model.stretch(context) > 1 {
-            arguments += ["--rope-scaling", "yarn", "--rope-scale", String(model.stretch(context)), "--yarn-orig-ctx", String(model.nativeContext)]
-        }
         FileManager.default.createFile(atPath: log.path, contents: nil)
         let server = Process()
         server.executableURL = binary
-        server.arguments = arguments
+        server.arguments = Self.arguments(model, file: LocalModels.file(model, in: models), port: port, context: context)
         // The key goes in its environment: a command line can be read by every account on the Mac.
         server.environment = ShellEnvironment.childEnvironment().merging(["LLAMA_API_KEY": key]) { $1 }
         server.standardInput = FileHandle.nullDevice
@@ -501,6 +494,25 @@ public actor ModelServer {
         }
         stop()
         throw OatcakeError("The language model took too long to start.")
+    }
+
+    /// What llama.cpp's server is started with, for one model and window.
+    static func arguments(_ model: LocalModel, file: URL, port: Int, context: Int) -> [String] {
+        var arguments = ["-m", file.path, "--host", "127.0.0.1", "--port", String(port),
+                         "-c", String(context), "-ngl", "99", "-fa", "on", "--no-context-shift", "--no-webui", "--jinja", "-np", "1",
+                         // A long call on a slow Mac can take longer to write up than llama.cpp's ten minutes.
+                         "--timeout", "3600",
+                         // No copies of earlier prompts in memory. llama.cpp keeps up to 8 GB of them, which
+                         // the memory a model is given room for doesn't count: 2.7 to 7.2 GB more once a second
+                         // hour-long call is written up. Oatcake seldom goes back to an earlier prompt (a
+                         // summary written again after something else reads its transcript again). The
+                         // prompt the server holds is still reused, so the to-dos after a summary don't
+                         // read the transcript again.
+                         "--cache-ram", "0"]
+        if model.stretch(context) > 1 {
+            arguments += ["--rope-scaling", "yarn", "--rope-scale", String(model.stretch(context)), "--yarn-orig-ctx", String(model.nativeContext)]
+        }
+        return arguments
     }
 
     /// Stops the server now, whatever it's doing: at quit, and when its model is removed.
