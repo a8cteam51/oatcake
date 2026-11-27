@@ -49,10 +49,11 @@ public struct LlmConfig: Codable, Equatable, Sendable {
 
     /**
      * Whether the model thinks a task through before it replies, for each thing it's asked to do.
-     * It's slower with it and not always better. Each starts where it did best when measured on
-     * an hour-and-a-half call, several runs each way: with it, summaries gave a decision to the
-     * right person far more reliably, names were invented less often, and Ask kept to what was
-     * asked; without it, to-dos kept what was decided, where with it they often lost the detail.
+     * It's slower with it and not always better. Each of Oatcake's models comes with the switches
+     * that suited it (LocalModel.reasoning). These are Qwen3's, measured on an hour-and-a-half
+     * call, several runs each way: with it, summaries gave a decision to the right person far more
+     * reliably, names were invented less often, and Ask kept to what was asked; without it, to-dos
+     * kept what was decided, where with it they often lost the detail.
      */
     public struct Reasoning: Codable, Equatable, Sendable {
         public var summary = true
@@ -62,6 +63,13 @@ public struct LlmConfig: Codable, Equatable, Sendable {
         /// Drafts for sharing. Not measured: it starts as summaries do, which it's closest to.
         public var sharing = true
         public init() {}
+        public init(summary: Bool, todos: Bool, names: Bool, ask: Bool, sharing: Bool) {
+            self.summary = summary
+            self.todos = todos
+            self.names = names
+            self.ask = ask
+            self.sharing = sharing
+        }
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let start = Reasoning()
@@ -71,17 +79,34 @@ public struct LlmConfig: Codable, Equatable, Sendable {
             ask = (try? c.decodeIfPresent(Bool.self, forKey: .ask)) ?? start.ask
             sharing = (try? c.decodeIfPresent(Bool.self, forKey: .sharing)) ?? start.sharing
         }
+
+        /// What's different in `other`, as Settings says it: "off for summaries and Ask", or "on for
+        /// to-dos, and off for name suggestions". Nil when nothing is.
+        public func change(to other: Reasoning) -> String? {
+            // In the order Settings › Summaries shows them.
+            let tasks: [(String, KeyPath<Reasoning, Bool>)] = [("summaries", \.summary), ("to-dos", \.todos), ("drafts for sharing", \.sharing),
+                                                               ("name suggestions", \.names), ("Ask", \.ask)]
+            let changed = tasks.filter { self[keyPath: $0.1] != other[keyPath: $0.1] }
+            let on = changed.filter { other[keyPath: $0.1] }.map(\.0), off = changed.filter { !other[keyPath: $0.1] }.map(\.0)
+            func list(_ names: [String]) -> String { names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last! }
+            let parts = [on.isEmpty ? nil : "on for " + list(on), off.isEmpty ? nil : "off for " + list(off)].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: ", and ")
+        }
     }
 
-    /// One of LocalModels' ids ("qwen3-8b", "qwen3-4b"), or "own".
+    /// One of LocalModels' ids ("qwen3.6-35b-a3b", "qwen3.5-4b"…), or "own".
     public var model: String
     public var own = Own()
     public var reasoning = Reasoning()
 
-    /// The model that suits this Mac's memory.
-    public init() { model = LocalModels.recommended().id }
+    /// The model that suits this Mac's memory, with its own reasoning switches.
+    public init() { self.init(model: LocalModels.recommended().id) }
 
-    public init(model: String) { self.model = model }
+    /// One of Oatcake's models starts with the switches that suited it; a server of your own with Qwen3's.
+    public init(model: String) {
+        self.model = model
+        reasoning = LocalModels.find(model)?.reasoning ?? Reasoning()
+    }
 
     /// Earlier, the choice was a provider (Claude Code, the Anthropic API, or any OpenAI-compatible
     /// address) with its settings under its own key.
@@ -90,21 +115,21 @@ public struct LlmConfig: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         own = (try? c.decodeIfPresent(Own.self, forKey: .own)) ?? Own()
-        reasoning = (try? c.decodeIfPresent(Reasoning.self, forKey: .reasoning)) ?? Reasoning()
         if let saved = try? c.decodeIfPresent(String.self, forKey: .model), saved == Self.ownServer || LocalModels.find(saved) != nil {
             model = saved
-            return
-        }
         // Older settings: a local server that was set up carries over; Claude doesn't, and neither
         // does an address that isn't on your Mac or network.
-        model = LocalModels.recommended().id
-        guard let older = try? decoder.container(keyedBy: OlderKeys.self),
-              let provider = try? older.decodeIfPresent(String.self, forKey: .provider), provider == "local" || provider == "openai-compatible" else { return }
-        let server = ((try? older.decodeIfPresent(Own.self, forKey: .local)) ?? nil) ?? ((try? older.decodeIfPresent(Own.self, forKey: .openai)) ?? nil)
-        if let server, !server.baseUrl.trimmed.isEmpty, isLocalEndpoint(server.baseUrl) {
+        } else if let older = try? decoder.container(keyedBy: OlderKeys.self),
+                  let provider = try? older.decodeIfPresent(String.self, forKey: .provider), provider == "local" || provider == "openai-compatible",
+                  let server = ((try? older.decodeIfPresent(Own.self, forKey: .local)) ?? nil) ?? ((try? older.decodeIfPresent(Own.self, forKey: .openai)) ?? nil),
+                  !server.baseUrl.trimmed.isEmpty, isLocalEndpoint(server.baseUrl) {
             own = server
             model = Self.ownServer
+        } else {
+            model = LocalModels.recommended().id
         }
+        // Switches that have been saved are kept; until then, the model's own.
+        reasoning = (try? c.decodeIfPresent(Reasoning.self, forKey: .reasoning)) ?? LocalModels.find(model)?.reasoning ?? Reasoning()
     }
 }
 

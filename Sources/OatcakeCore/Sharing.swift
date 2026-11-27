@@ -40,9 +40,10 @@ public func draftForSharing(_ config: Config, meeting rel: String, request: Stri
     guard !summary.trimmed.isEmpty else { throw OatcakeError("This meeting has no summary to draft from.") }
     let prompt = sharingPrompt(config, title: titleOfMeeting(rel, files.meta), participants: files.meta.participants ?? [config.myName],
                                summary: summary, todo: files.todo, request: request)
-    let reply = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + replyTokens + 200) { model, _ in
+    let room = replyRoom(config.llm)
+    let reply = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + room + 200) { model, _ in
         try await model.complete([ChatMessage("system", sharingSystem), ChatMessage("user", prompt)],
-                                 think: config.llm.reasoning.sharing, maxTokens: replyTokens)
+                                 think: config.llm.reasoning.sharing, maxTokens: room)
     }
     let draft = theyThem(sharingBody(reply), names: files.meta.participants ?? [])
     guard !draft.isEmpty else { throw OatcakeError("The model returned an empty draft.") }

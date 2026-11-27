@@ -44,8 +44,8 @@ first recording after updating from a version before 0.5.0 asks once more (see
 
 There's nothing to sign in to and no key to paste: the models run on your Mac, and Oatcake
 fetches them itself, into `~/Library/Application Support/Oatcake/models`. They start downloading
-when you start your first recording: the language model that writes summaries (Qwen3 8B, 5.0 GB,
-on a Mac with 16 GB of memory or more; Qwen3 4B, 2.5 GB, on one with 8 GB) and the speech models
+when you start your first recording: the language model that writes summaries (Qwen3.6 35B-A3B,
+20.5 GB, on a Mac with 32 GB of memory or more; Qwen3.5 4B, 3.0 GB, on one with less) and the speech models
 that write the live transcript. The ones that tell voices apart follow when the call is processed
 (the speech models come to about 500 MB in all; with the live transcript turned off, all of them
 wait until then). The call's screen shows how far the download has got, and Settings › Models

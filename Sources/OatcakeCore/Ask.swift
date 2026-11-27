@@ -67,7 +67,8 @@ public func ask(_ config: Config, meeting rel: String?, question: String, histor
     let tail = "\(historyBlock(history))Today is \(longDate(Date())).\nQuestion: \(question)"
     let routing = rel == nil ? libraryRouteTask : routeTask
     let largest = largestContext(config.llm)
-    let fixed = LocalModels.tokens(in: system.content + tail + routing) + replyTokens + 300
+    let room = replyRoom(config.llm)
+    let fixed = LocalModels.tokens(in: system.content + tail + routing) + room + 300
     let open = if let rel, let files {
         openMeetingText(config, rel, files, question: question, tokens: max(1_000, largest - fixed))
     } else { "" }
@@ -100,7 +101,7 @@ public func ask(_ config: Config, meeting rel: String?, question: String, histor
         }
         onStep("Writing the answer")
         let prompt = ([open] + found.map(\.text) + [tail]).filter { !$0.isEmpty }.joined(separator: "\n\n")
-        let answer = try await model.complete([system, ChatMessage("user", prompt)], think: think, maxTokens: replyTokens)
+        let answer = try await model.complete([system, ChatMessage("user", prompt)], think: think, maxTokens: room)
         let sources = [rel].compactMap { $0 } + found.map(\.path)
         return citationLinks(theyThem(answer, names: files?.meta.participants ?? []), sources: sources, hasOpenMeeting: rel != nil)
     }

@@ -438,7 +438,8 @@ private func namesFromTranscript(_ config: Config, title: String, lines: [Line],
         Reply as JSON: {"speakers": [{"speaker": "A", "name": the name or null, "quote": the few words from the transcript that show it, or null}]}.
         """
     // People say who they are early on: a call too long for the model keeps its start.
-    let room = largestContext(config.llm) - LocalModels.tokens(in: head + task) - replyTokens - 200
+    let reply = replyRoom(config.llm)
+    let room = largestContext(config.llm) - LocalModels.tokens(in: head + task) - reply - 200
     var said: [String] = []
     var spoken: [String] = []
     var used = 0
@@ -451,11 +452,11 @@ private func namesFromTranscript(_ config: Config, title: String, lines: [Line],
     }
     let transcript = said.joined(separator: "\n")
     let prompt = "\(head)\n\nTranscript:\n\(transcript)\n\n\(task)"
-    let reply = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + replyTokens + 200) { model, _ in
-        try await model.complete([ChatMessage("system", namesSystem), ChatMessage("user", prompt)], schema: namesSchema, think: config.llm.reasoning.names, maxTokens: replyTokens)
+    let answer = try await withModel(config.llm, tokens: LocalModels.tokens(in: prompt) + reply + 200) { model, _ in
+        try await model.complete([ChatMessage("system", namesSystem), ChatMessage("user", prompt)], schema: namesSchema, think: config.llm.reasoning.names, maxTokens: reply)
     }
     // Checked against the words alone: a name that's only there as someone else's label wasn't said.
-    return namesIn(reply, unknown: unknown, transcript: spoken.joined(separator: "\n"), myName: config.myName)
+    return namesIn(answer, unknown: unknown, transcript: spoken.joined(separator: "\n"), myName: config.myName)
 }
 
 /**

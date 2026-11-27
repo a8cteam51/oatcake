@@ -9,6 +9,8 @@ struct SettingsView: View {
     @ViewState var jargon = ""
     @ViewState var ignoredEvents = ""
     @ViewState var calendarEditor: CalendarSettingsEdit?
+    /// Which reasoning switches the model just chosen changed, said under that model in the list.
+    @ViewState var reasoningNote: String?
     /// macOS says notifications are turned off for Oatcake: reminders and call notices can't show.
     @ViewState private var notificationsOff = false
     @AppStorage(SettingsPane.key) private var pane = SettingsPane.general
