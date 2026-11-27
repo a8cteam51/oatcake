@@ -70,6 +70,7 @@ struct MeetingMenuItems: View {
     /// The ⋯ menu's own meeting, and how it does what's chosen. Anywhere else, the open meeting as it
     /// last said, which is sent what's chosen.
     var local: (open: OpenMeeting, perform: (MeetingCommand) -> Void)?
+    var showsDraftShortcut = false
 
     var body: some View {
         let open = local?.open ?? model.meetingInView.flatMap { $0.path == node?.path ? $0 : nil }
@@ -83,6 +84,7 @@ struct MeetingMenuItems: View {
 
         // Writing it again first, then taking it elsewhere, then the meeting itself.
         Button { perform(.draftForSharing) } label: { Label("Draft for Sharing…", systemImage: "square.and.pencil") }
+            .keyboardShortcut(showsDraftShortcut ? KeyboardShortcut("d", modifiers: [.command, .shift]) : nil)
             .disabled(!canDraft || summarising || model.jobs.drafting.contains(path))
             .help(todos ? "Write this meeting’s summary and to-dos again for other people to read"
                   : "Write this meeting’s summary again for other people to read")

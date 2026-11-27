@@ -42,6 +42,8 @@ struct AskBar: View {
                     .textFieldStyle(.plain)
                     .focused($focused)
                     .onSubmit { submit() }
+                    .accessibilityHint("Press Command-L to focus this field.")
+                if !focused { ShortcutHint("⌘L") }
                 if chat.running != nil {
                     Button { chat.cancel() } label: { Image(systemName: "stop.fill").font(.system(size: 10)) }
                         .buttonStyle(RoundButtonStyle(filled: true)).help("Stop").accessibilityLabel("Stop")

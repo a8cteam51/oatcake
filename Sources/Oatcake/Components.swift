@@ -18,6 +18,21 @@ extension Color {
     })
 }
 
+/// A visible hint for an existing shortcut; the menu or control still owns the key binding.
+struct ShortcutHint: View {
+    let keys: String
+
+    init(_ keys: String) { self.keys = keys }
+
+    var body: some View {
+        Text(verbatim: keys)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize()
+            .accessibilityHidden(true)
+    }
+}
+
 struct ColourSwatchPopover: View {
     let title: String
     let selected: SwatchColour?

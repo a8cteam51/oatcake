@@ -50,6 +50,17 @@ extension FocusedValues {
     }
 }
 
+private struct TodoStatusKey: FocusedValueKey {
+    typealias Value = Binding<TodosView.Status>
+}
+
+extension FocusedValues {
+    var todoStatus: Binding<TodosView.Status>? {
+        get { self[TodoStatusKey.self] }
+        set { self[TodoStatusKey.self] = newValue }
+    }
+}
+
 /// The menus: File, Edit's Find and Search, View's tabs and text sizes, Go, Meeting, Recording and Help.
 /// What's in them is drawn by views, which see the model change and keep each item's greyed state up to date.
 struct AppCommands: Commands {
@@ -67,8 +78,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .newItem) {
             FileItems(model: model, trash: trashMeetings)
         }
-        // View › the open meeting's tabs, and the size of reading text: summaries, answers,
-        // transcripts, notes and the Markdown editors.
+        // View › the open meeting’s tabs or the To-dos filters, and the size of reading text.
         CommandGroup(before: .toolbar) {
             TabItems(model: model)
             Divider()
@@ -104,17 +114,31 @@ private struct FileItems: View {
     }
 }
 
-/// View › Summary (⌘1), Transcript, My Notes and Draft, for the open meeting.
+/// The number keys select a tab or a filter depending on the page, never both.
 private struct TabItems: View {
+    @FocusedBinding(\.todoStatus) private var todoStatus
     let model: AppModel
 
     var body: some View {
-        let open = model.meetingInView
-        ForEach(Array(MeetingTab.allCases.enumerated()), id: \.offset) { i, tab in
-            Button(tab.menuName) { model.request(.tab(tab)) }
-                .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: .command)
-                .disabled(!(open?.tabs.contains(tab) ?? false))
+        if model.selection == .todos {
+            ForEach(Array(TodosView.Status.allCases.enumerated()), id: \.offset) { i, status in
+                // Named in full: a menu item called just Open reads as a command.
+                Button("\(status.title) To-dos") { todoStatus = status }
+                    .keyboardShortcut(numberKey(i), modifiers: .command)
+                    .disabled(todoStatus == nil || model.searching)
+            }
+        } else {
+            let open = model.meetingInView
+            ForEach(Array(MeetingTab.allCases.enumerated()), id: \.offset) { i, tab in
+                Button(tab.menuName) { model.request(.tab(tab)) }
+                    .keyboardShortcut(numberKey(i), modifiers: .command)
+                    .disabled(!(open?.tabs.contains(tab) ?? false))
+            }
         }
+    }
+
+    private func numberKey(_ index: Int) -> KeyEquivalent {
+        KeyEquivalent(Character("\(index + 1)"))
     }
 }
 
@@ -156,7 +180,7 @@ private struct MeetingMenu: View {
 
     var body: some View {
         let node = model.meetingInView.flatMap { model.library.tree?.find($0.path) }
-        MeetingMenuItems(model: model, node: node)
+        MeetingMenuItems(model: model, node: node, showsDraftShortcut: true)
     }
 }
 

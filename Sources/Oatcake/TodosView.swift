@@ -18,7 +18,17 @@ struct TodosView: View {
         self.homePreview = homePreview
     }
 
-    enum Status: Hashable { case open, done, all }
+    enum Status: CaseIterable, Hashable {
+        case open, done, all
+
+        var title: String {
+            switch self {
+            case .open: "Open"
+            case .done: "Done"
+            case .all: "All"
+            }
+        }
+    }
     enum Grouping: Hashable { case due, folder, owner }
     /// Whose to-dos are listed.
     enum Owner: Hashable { case everyone, mine, named(String) }
@@ -52,6 +62,7 @@ struct TodosView: View {
                 preview(items, today: today, myName: myName)
             } else {
                 fullPage(items, today: today, myName: myName)
+                    .focusedSceneValue(\.todoStatus, $status)
             }
         }
         .onChange(of: model.library.todoMeetings) {
@@ -151,9 +162,9 @@ struct TodosView: View {
             // What's shown, then how it's arranged.
             ToolbarItem(placement: .automatic) {
                 Picker("Show", selection: $status) {
-                    Text("Open · \(open.count)").tag(Status.open)
-                    Text("Done").tag(Status.done)
-                    Text("All").tag(Status.all)
+                    ForEach(Status.allCases, id: \.self) { filter in
+                        Text(filter == .open ? "\(filter.title) · \(open.count)" : filter.title).tag(filter)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

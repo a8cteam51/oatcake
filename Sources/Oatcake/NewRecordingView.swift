@@ -50,18 +50,20 @@ struct NewRecordingView: View {
                               systemImage: "arrow.down.circle")
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    let returnStarts = !starting && focus != .prep && !model.searching
                     HStack(spacing: 10) {
                         Button(action: start) {
                             Label(starting ? "Starting…" : "Start recording", systemImage: "circle.fill")
                                 .padding(.horizontal, 6)
                         }
+                        .help(returnStarts ? "Start recording (Return)" : "Start recording")
                         .buttonStyle(.borderedProminent)
                         .tint(.red)
                         .controlSize(.large)
                         .disabled(starting)
                         // Return starts the recording, except in the prep notes, where it adds the point typed,
                         // and while search is open over the window: Return is search's then.
-                        .keyboardShortcut(focus == .prep || model.searching ? nil : .defaultAction)
+                        .keyboardShortcut(returnStarts ? .defaultAction : nil)
                         if let link = event?.callLink, let url = URL(string: link) {
                             Button { NSWorkspace.shared.open(url) } label: { Label("Join the call", systemImage: "video") }
                                 .controlSize(.large)
@@ -69,6 +71,7 @@ struct NewRecordingView: View {
                         }
                         // Escape too (but not while search is open: Escape closes that). Back to where you were before.
                         Button("Cancel") { model.cancelNewRecording() }.controlSize(.large).buttonStyle(.borderless)
+                            .help(model.searching ? "Cancel" : "Cancel (Esc)")
                             .keyboardShortcut(model.searching ? nil : .cancelAction)
                     }
                     Text("Let the people on the call know you’re recording.")

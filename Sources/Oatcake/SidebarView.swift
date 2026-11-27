@@ -89,7 +89,7 @@ struct SidebarView: View {
                     Spacer()
                     // 24 points to click; the symbol stays at the frame's end, in line with the counts.
                     Button { newFolderIn = ""; draft = "" } label: { Image(systemName: "folder.badge.plus").frame(width: 24, height: 24, alignment: .trailing).contentShape(Rectangle()) }
-                        .buttonStyle(.borderless).help("New folder").accessibilityLabel("New folder")
+                        .buttonStyle(.borderless).help("New folder (⇧⌘N)").accessibilityLabel("New folder")
                         .padding(.trailing, 1.5) // This symbol's badge reaches further right than the refresh arrow.
                 }
                 .padding(.trailing, headerButtonInset)
@@ -115,14 +115,17 @@ struct SidebarView: View {
         .focusedValue(\.trashMeetings, trashSelected)
         .safeAreaInset(edge: .top) {
             Button { model.newRecording() } label: {
-                // During a call it goes back to that call, so it says so.
-                if model.recording.live != nil {
-                    Label("Return to the call", systemImage: "waveform").frame(maxWidth: .infinity)
-                } else {
-                    Label("Record a call", systemImage: "circle.fill")
-                        .labelStyle(NewRecordingLabelStyle())
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    // During a call it goes back to that call, so it says so.
+                    if model.recording.live != nil {
+                        Label("Return to the call", systemImage: "waveform")
+                    } else {
+                        Label("Record a call", systemImage: "circle.fill")
+                            .labelStyle(NewRecordingLabelStyle())
+                    }
+                    ShortcutHint("⌘N")
                 }
+                .frame(maxWidth: .infinity)
             }
             .controlSize(.large)
             .buttonStyle(.bordered)
@@ -326,7 +329,7 @@ struct SidebarView: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Refresh calendars")
                 .disabled(calendar.fetching)
-                .help("Refresh calendars")
+                .help("Refresh calendars (⌘R)")
             }
             .padding(.trailing, headerButtonInset)
         }

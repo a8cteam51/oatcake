@@ -20,6 +20,12 @@ describes the menus.
 | ⌘Z | Put back what was just moved to the Trash | Edit › Undo |
 | ⌘, | Settings | Oatcake › Settings… |
 
+The sidebar’s Record a call button shows ⌘N, and so does Record a Call… in Oatcake’s menu in the
+macOS menu bar, beside ⌘, for Settings. They work while that menu is open; neither is a
+system-wide shortcut. The Ask field shows ⌘L until it has the keyboard. Hover over a button or
+icon to see its key: Start recording, Stop, Save, Cancel, the new folder icon and the calendar
+refresh icon say it there.
+
 Go › Home, To-dos and All Meetings, Recording › Join Call and Show Live Notes, and Help › Oatcake
 Help (these pages) have no keys of their own.
 
@@ -28,6 +34,7 @@ Help (these pages) have no keys of their own.
 | Keys | What it does | Menu |
 |---|---|---|
 | ⌘1, ⌘2, ⌘3, ⌘4 | Summary, Transcript, My notes, and Draft in a meeting with a draft for sharing | View |
+| ⇧⌘D | Open the Draft for Sharing setup from Summary or Draft | Meeting or **⋯** › Draft for Sharing… |
 | ⌘F | Find on the tab showing: its words are marked | Edit › Find… |
 | ⌘G and ⇧⌘G | The next and previous line with the words, on the Transcript tab | Edit › Find Next, Find Previous |
 | Escape | Close Find, or Ask's conversation, wherever the keyboard is | |
@@ -37,6 +44,14 @@ Help (these pages) have no keys of their own.
 Everything else that can be done to the meeting is in the Meeting menu, which has the same
 commands as the meeting's **⋯** menu and its right-click menu, including **Rename…**, **Move To**
 and **Move to Trash**.
+
+## In To-dos
+
+| Keys | What it does | Menu |
+|---|---|---|
+| ⌘1, ⌘2, ⌘3 | Show Open, Done or All to-dos | View › Open To-dos, Done To-dos, All To-dos |
+
+These only change the status filter on the full To-dos page, not on Home.
 
 ## The meeting list and the sidebar
 

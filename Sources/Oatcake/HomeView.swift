@@ -34,7 +34,7 @@ struct HomeView: View {
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Refresh calendars")
-                    .help("Refresh calendars")
+                    .help("Refresh calendars (⌘R)")
                     .disabled(model.calendar.fetching)
                 }
             }

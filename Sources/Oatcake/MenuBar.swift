@@ -198,8 +198,9 @@ final class StatusItem: NSObject, NSMenuDelegate {
     /// Built when it opens, so it lists what's coming up now.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        func add(_ title: String, _ action: Selector?, tag: Int = 0) {
-            let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        func add(_ title: String, _ action: Selector?, tag: Int = 0, key: String = "") {
+            // These equivalents are local to the status menu when it is open, not global hotkeys.
+            let entry = NSMenuItem(title: title, action: action, keyEquivalent: key)
             entry.target = self
             entry.tag = tag
             menu.addItem(entry)
@@ -219,14 +220,14 @@ final class StatusItem: NSObject, NSMenuDelegate {
                 add("\(when)   \(event.title)", #selector(openListed(_:)), tag: index)
             }
             menu.addItem(.separator())
-            add("Record a Call…", #selector(newRecording))
+            add("Record a Call…", #selector(newRecording), key: "n")
         case .idle:
-            add("Record a Call…", #selector(newRecording))
+            add("Record a Call…", #selector(newRecording), key: "n")
         case nil:
             break
         }
         if menu.numberOfItems > 0 { menu.addItem(.separator()) }
-        add("Settings…", #selector(openSettings))
+        add("Settings…", #selector(openSettings), key: ",")
         menu.addItem(.separator())
         add("Open Oatcake", #selector(openApp))
         add("Quit Oatcake", #selector(quit))

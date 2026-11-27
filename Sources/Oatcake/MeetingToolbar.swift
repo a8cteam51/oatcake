@@ -47,7 +47,7 @@ extension MeetingView {
 
     /// The meeting's menu: the same commands as the Meeting menu and its right-click menus.
     private var actions: some View {
-        MeetingMenuItems(model: model, node: node, local: (menuState, perform))
+        MeetingMenuItems(model: model, node: node, local: (menuState, perform), showsDraftShortcut: true)
     }
 
     /// What this meeting can do just now, for the menus outside it.
