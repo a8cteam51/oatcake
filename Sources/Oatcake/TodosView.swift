@@ -45,9 +45,11 @@ struct TodosView: View {
     /// A list's text straight after a tick or an add here, until the app has read it back from disk,
     /// so two quick ticks in one meeting don't undo each other.
     @ViewState private var local: [String: String] = [:]
-    /// To-dos just ticked here, by item ID. Where only open ones are listed (Open, and Home), each
-    /// stays a moment so its tick and line can be seen before it leaves.
-    @ViewState private var justTicked: Set<String> = []
+    /// To-dos just ticked here: item ID → that tick. Where only open ones are listed (Open, and
+    /// Home), each stays a moment so its tick and line can be seen before it leaves. Ticked, unticked
+    /// and ticked again, it's the last tick that takes it away.
+    @ViewState private var ticks: [String: UUID] = [:]
+    private var justTicked: Set<String> { Set(ticks.keys) }
     @FocusState private var addFocused: Bool
     @AppStorage(TextScale.key) private var textScale = 1.0
 
@@ -357,10 +359,11 @@ struct TodosView: View {
     private func tick(_ item: TodoItem) {
         let path = item.meeting.path
         if !item.todo.done {
-            justTicked.insert(item.id)
+            let tick = UUID()
+            ticks[item.id] = tick
             Task {
                 try? await Task.sleep(for: .milliseconds(900))
-                _ = withAnimation { justTicked.remove(item.id) }
+                if ticks[item.id] == tick { _ = withAnimation { ticks[item.id] = nil } }
             }
         }
         model.library.tick(path, item.todo, undo: undoManager) { [local = $local] text in
